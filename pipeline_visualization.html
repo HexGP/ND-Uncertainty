@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ND-SDF Pipeline Visualization</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .pipeline-container {
+            display: grid;
+            grid-template-columns: 1fr 400px;
+            gap: 20px;
+            padding: 30px;
+        }
+
+        .main-pipeline {
+            position: relative;
+        }
+
+        .pipeline-image {
+            width: 100%;
+            border-radius: 10px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+        }
+
+        .code-panel {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            overflow-y: auto;
+            max-height: calc(100vh - 200px);
+        }
+
+        .step {
+            margin-bottom: 25px;
+            padding: 15px;
+            background: white;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .step:hover {
+            transform: translateX(5px);
+            box-shadow: 0 3px 10px rgba(0,0,0,0.1);
+        }
+
+        .step.active {
+            border-left-color: #f093fb;
+            background: #fff5f8;
+        }
+
+        .step h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 1.2em;
+        }
+
+        .step p {
+            color: #555;
+            line-height: 1.6;
+            margin-bottom: 10px;
+        }
+
+        .code-ref {
+            background: #2d2d2d;
+            color: #f8f8f2;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            overflow-x: auto;
+            margin-top: 10px;
+        }
+
+        .code-ref .file-path {
+            color: #66d9ef;
+            font-size: 0.85em;
+            margin-bottom: 5px;
+        }
+
+        .code-ref .code-line {
+            color: #a6e22e;
+        }
+
+        .highlight-box {
+            position: absolute;
+            border: 3px solid #f093fb;
+            border-radius: 5px;
+            background: rgba(240, 147, 251, 0.2);
+            pointer-events: none;
+            transition: all 0.3s ease;
+            display: none;
+        }
+
+        .legend {
+            background: #f8f9fa;
+            padding: 20px;
+            border-top: 2px solid #e9ecef;
+        }
+
+        .legend h3 {
+            margin-bottom: 15px;
+            color: #667eea;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 3px;
+            margin-right: 10px;
+        }
+
+        .navigation {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-top: 2px solid #e9ecef;
+        }
+
+        .nav-btn {
+            padding: 10px 20px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1em;
+            transition: all 0.3s ease;
+        }
+
+        .nav-btn:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+        }
+
+        .nav-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        @media (max-width: 1024px) {
+            .pipeline-container {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>ND-SDF Pipeline Visualization</h1>
+            <p>Normal Deflection Field for High-Fidelity Indoor Reconstruction</p>
+        </div>
+
+        <div class="pipeline-container">
+            <div class="main-pipeline">
+                <img src="assets/teaser1.png" alt="ND-SDF Pipeline" class="pipeline-image" id="pipelineImg">
+                <div class="highlight-box" id="highlightBox"></div>
+            </div>
+
+            <div class="code-panel" id="codePanel">
+                <div class="step active" data-step="1" data-highlight="top-left">
+                    <h3>1. Ray Casting & Deflection Angle Guided Sampling</h3>
+                    <p>Camera rays are cast into the scene. The sampling strategy is guided by deflection angles to focus on complex regions with high-frequency details.</p>
+                    <div class="code-ref">
+                        <div class="file-path">exp_runner.py: angle_guided_sampling()</div>
+                        <div class="code-line">sampling_idx = self.angle_guided_sampling(sample)</div>
+                    </div>
+                    <div class="code-ref" style="margin-top: 10px;">
+                        <div class="file-path">exp_runner.py: prepare_sample()</div>
+                        <div class="code-line">rays_o, rays_d, depth_scale = get_rays_batch_image(...)</div>
+                    </div>
+                </div>
+
+                <div class="step" data-step="2" data-highlight="left-middle">
+                    <h3>2. Point Sampling Along Rays</h3>
+                    <p>Points are sampled along each ray using error-bounded sampling strategy. The SDF network evaluates each point.</p>
+                    <div class="code-ref">
+                        <div class="file-path">models/system.py: forward()</div>
+                        <div class="code-line">z, z_near, near, far, outside = self.sampler.get_z_vals(...)</div>
+                    </div>
+                    <div class="code-ref" style="margin-top: 10px;">
+                        <div class="file-path">models/system.py: line 139</div>
+                        <div class="code-line">points = rays_o[:, :, None, :] + rays_d[:, :, None, :] * z</div>
+                    </div>
+                </div>
+
+                <div class="step" data-step="3" data-highlight="center-left">
+                    <h3>3. SDF Network & Feature Extraction</h3>
+                    <p>The SDF network predicts signed distance values (s), geometric features (fg), and gradients for each sampled point.</p>
+                    <div class="code-ref">
+                        <div class="file-path">models/system.py: line 141</div>
+                        <div class="code-line">sdf, feat, gradient, hessian = self.sdf.get_all(points, ...)</div>
+                    </div>
+                    <div class="code-ref" style="margin-top: 10px;">
+                        <div class="file-path">models/fields.py: SDFNetwork</div>
+                        <div class="code-line">Returns: sdf (s), feature vectors (fg), gradients</div>
+                    </div>
+                </div>
+
+                <div class="step" data-step="4" data-highlight="center">
+                    <h3>4. NBField: Normal Deflection Quaternion</h3>
+                    <p>The Normal Deflection Field (NBField) predicts a quaternion (q0, q1, q2, q3) representing the rotation needed to align the SDF normal with the true surface normal.</p>
+                    <div class="code-ref">
+                        <div class="file-path">models/system.py: line 147-148</div>
+                        <div class="code-line">quats = self.nb(points, rays_d, gradient_normalized, feat, app_nb)</div>
+                    </div>
+                    <div class="code-ref" style="margin-top: 10px;">
+                        <div class="file-path">models/fields.py: NBField.forward()</div>
+                        <div class="code-line">Returns: quat (..., 4) - quaternion for rotation</div>
+                    </div>
+                </div>
+
+                <div class="step" data-step="5" data-highlight="center-right">
+                    <h3>5. Color Network</h3>
+                    <p>The color network predicts RGB color (c) for each point using position, view direction, normal, and features.</p>
+                    <div class="code-ref">
+                        <div class="file-path">models/system.py: line 145</div>
+                        <div class="code-line">rgbs = self.rgb(points, rays_d, gradient_normalized, feat, app)</div>
+                    </div>
+                    <div class="code-ref" style="margin-top: 10px;">
+                        <div class="file-path">models/fields.py: ColorNetwork</div>
+                        <div class="code-line">Returns: rgb (..., 3) - color values</div>
+                    </div>
+                </div>
+
+                <div class="step" data-step="6" data-highlight="center-bottom">
+                    <h3>6. Deflection Angle Guided Unbiased Rendering</h3>
+                    <p>Volume rendering with deflection angle guidance. Quaternions are composited along rays and used to compute biased normals. Alphas are computed using confidence-guided unbiased density estimation.</p>
+                    <div class="code-ref">
+                        <div class="file-path">models/system.py: line 197-199</div>
+                        <div class="code-line">quat = composite(quats, weights)</div>
+                        <div class="code-line">quat = normalize_quat(quat)</div>
+                    </div>
+                    <div class="code-ref" style="margin-top: 10px;">
+                        <div class="file-path">models/system.py: line 217</div>
+                        <div class="code-line">biased_normal = quat_mult(quat_mult(iter_quat, to_pure_quat(normal)), quat_conj(iter_quat))</div>
+                    </div>
+                </div>
+
+                <div class="step" data-step="7" data-highlight="right-middle">
+                    <h3>7. Output Rendering</h3>
+                    <p>The pipeline outputs Depth, Normal, ΔNormal (deflection), Quat (quaternion), Δθ (deflection angle), and RGB images.</p>
+                    <div class="code-ref">
+                        <div class="file-path">models/system.py: line 239-256</div>
+                        <div class="code-line">output['depth'] = depth</div>
+                        <div class="code-line">output['normal'] = normal</div>
+                        <div class="code-line">output['biased_normal_w'] = biased_normal</div>
+                        <div class="code-line">output['quat'] = quat</div>
+                        <div class="code-line">output['rgb'] = rgb</div>
+                    </div>
+                </div>
+
+                <div class="step" data-step="8" data-highlight="right-top">
+                    <h3>8. Loss Computation</h3>
+                    <p>Two main losses: (1) Adaptive deflection angle prior loss comparing rendered depth/normal with priors, (2) Deflection angle guided color loss comparing RGB with ground truth.</p>
+                    <div class="code-ref">
+                        <div class="file-path">models/loss.py: ImplicitReconLoss.forward()</div>
+                        <div class="code-line">loss_rgb_l1 = l1_loss(output['rgb'], sample['rgb'], ...)</div>
+                    </div>
+                    <div class="code-ref" style="margin-top: 10px;">
+                        <div class="file-path">models/loss.py: line 448+</div>
+                        <div class="code-line">Adaptive deflection angle prior loss with depth/normal priors</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="legend">
+            <h3>Pipeline Components</h3>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #667eea;"></div>
+                <span><strong>SDF Network:</strong> Predicts signed distance and geometric features</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #f093fb;"></div>
+                <span><strong>NBField:</strong> Predicts quaternion for normal deflection</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #4facfe;"></div>
+                <span><strong>Color Network:</strong> Predicts RGB color</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #43e97b;"></div>
+                <span><strong>Volume Rendering:</strong> Compositing with deflection guidance</span>
+            </div>
+        </div>
+
+        <div class="navigation">
+            <button class="nav-btn" id="prevBtn" onclick="navigateStep(-1)">← Previous</button>
+            <button class="nav-btn" id="nextBtn" onclick="navigateStep(1)">Next →</button>
+            <button class="nav-btn" onclick="resetPipeline()">Reset</button>
+        </div>
+    </div>
+
+    <script>
+        let currentStep = 1;
+        const totalSteps = 8;
+        const steps = document.querySelectorAll('.step');
+        const highlightBox = document.getElementById('highlightBox');
+        const pipelineImg = document.getElementById('pipelineImg');
+
+        // Step highlight regions (relative to image)
+        const highlightRegions = {
+            1: { x: '5%', y: '10%', width: '25%', height: '20%' },
+            2: { x: '5%', y: '35%', width: '25%', height: '15%' },
+            3: { x: '30%', y: '30%', width: '20%', height: '20%' },
+            4: { x: '50%', y: '35%', width: '20%', height: '15%' },
+            5: { x: '70%', y: '30%', width: '20%', height: '20%' },
+            6: { x: '45%', y: '55%', width: '30%', height: '20%' },
+            7: { x: '75%', y: '35%', width: '20%', height: '25%' },
+            8: { x: '75%', y: '5%', width: '20%', height: '25%' }
+        };
+
+        function updateStep(stepNum) {
+            // Remove active class from all steps
+            steps.forEach(s => s.classList.remove('active'));
+            
+            // Add active class to current step
+            if (stepNum > 0 && stepNum <= totalSteps) {
+                steps[stepNum - 1].classList.add('active');
+                currentStep = stepNum;
+                
+                // Update highlight box
+                const region = highlightRegions[stepNum];
+                if (region) {
+                    highlightBox.style.display = 'block';
+                    highlightBox.style.left = region.x;
+                    highlightBox.style.top = region.y;
+                    highlightBox.style.width = region.width;
+                    highlightBox.style.height = region.height;
+                }
+                
+                // Scroll step into view
+                steps[stepNum - 1].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+            
+            // Update navigation buttons
+            document.getElementById('prevBtn').disabled = currentStep === 1;
+            document.getElementById('nextBtn').disabled = currentStep === totalSteps;
+        }
+
+        function navigateStep(direction) {
+            const newStep = currentStep + direction;
+            if (newStep >= 1 && newStep <= totalSteps) {
+                updateStep(newStep);
+            }
+        }
+
+        function resetPipeline() {
+            updateStep(1);
+        }
+
+        // Add click handlers to steps
+        steps.forEach((step, index) => {
+            step.addEventListener('click', () => {
+                updateStep(index + 1);
+            });
+        });
+
+        // Keyboard navigation
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowLeft') navigateStep(-1);
+            if (e.key === 'ArrowRight') navigateStep(1);
+            if (e.key === 'Home') resetPipeline();
+        });
+
+        // Initialize
+        updateStep(1);
+
+        // Handle image load for better positioning
+        pipelineImg.addEventListener('load', () => {
+            updateStep(currentStep);
+        });
+    </script>
+</body>
+</html>

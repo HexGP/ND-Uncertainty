@@ -76,7 +76,16 @@ class BaseDataset(Dataset):
         if self.monosdf:
             self.data_dir = conf.data_dir if str(conf.scan_id) == '-1' else os.path.join(conf.data_dir,f'{conf.scan_id}')
         else:
-            self.data_dir = conf.data_dir if str(conf.scan_id) == '-1' else os.path.join(conf.data_dir,f'{conf.scan_id}')
+            # For Replica dataset, scan directories are named 'scan1', 'scan2', etc.
+            if str(conf.scan_id) == '-1':
+                self.data_dir = conf.data_dir
+            else:
+                # Check if 'scan{id}' format exists, otherwise use just '{id}'
+                scan_path = os.path.join(conf.data_dir, f'scan{conf.scan_id}')
+                if os.path.exists(scan_path):
+                    self.data_dir = scan_path
+                else:
+                    self.data_dir = os.path.join(conf.data_dir, f'{conf.scan_id}')
         self.split = split
         self.num_rays = num_rays
         self.downscale = downscale
