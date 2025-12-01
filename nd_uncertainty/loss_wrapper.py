@@ -32,7 +32,18 @@ class UncertaintyAwareLoss(nn.Module):
         super().__init__()
         
         # Initialize base ND-SDF loss with all its native components
-        self.base_loss = ImplicitReconLoss(**conf.loss, optim_conf=conf.optim)
+        # Filter out uncertainty-related parameters that ImplicitReconLoss doesn't know about
+        loss_conf = dict(conf.loss)
+        uncertainty_params = [
+            'use_uncertainty', 'use_ssim_uncertainty', 'use_variance_regularizer',
+            'weight_unc', 'unc_lambda_reg', 'unc_clip_min', 'unc_eps',
+            'ssim_weight', 'ssim_anneal', 'ssim_clip_max', 'ssim_window_size', 'stop_ssim_gradient',
+            'variance_weight', 'use_uncertainty_annealing', 'uncertainty_anneal_param', 'weight_unc_sched'
+        ]
+        for param in uncertainty_params:
+            loss_conf.pop(param, None)  # Remove if exists, ignore if doesn't
+        
+        self.base_loss = ImplicitReconLoss(**loss_conf, optim_conf=conf.optim)
         
         # Check if uncertainty is enabled
         use_uncertainty = getattr(conf.loss, 'use_uncertainty', True)
