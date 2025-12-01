@@ -4,13 +4,18 @@ Entry point for ND-Uncertainty training.
 This replaces exp_runner.py's main block to use UncertaintyTrainer.
 """
 
-# NCCL_P2P_DISABLE: Force NCCL to stop trying GPU 0
 import os
-os.environ.setdefault("NCCL_P2P_DISABLE", "1")
 
-# Optionally pin to a single visible GPU if not already constrained by the job manager
-# For example, to default to GPU 4 (can be overridden by CUDA_VISIBLE_DEVICES env var):
-# os.environ.setdefault("CUDA_VISIBLE_DEVICES", "4")
+# GPU Routing: Choose one A100 that is not GPU0 (Rahman) and not GPU3 (display).
+# Change "1" to "2" or "4" if that's the free A100 you want to use.
+# This sets CUDA_VISIBLE_DEVICES internally, so don't set it from command line.
+if "CUDA_VISIBLE_DEVICES" not in os.environ:
+    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"  # Change to 2 or 4 if needed
+
+# Avoid NCCL trying to talk to hidden GPUs
+os.environ.setdefault("NCCL_P2P_DISABLE", "1")
+os.environ.setdefault("NCCL_P2P_LEVEL", "NVL")
 
 import sys
 import torch
@@ -27,8 +32,8 @@ def main():
         gpu = init_processes()
     else:
         # Single GPU training
-        # When CUDA_VISIBLE_DEVICES=4 is set, PyTorch remaps GPU 4 to be "GPU 0"
-        # So gpu=0 is correct - it will use the GPU specified in CUDA_VISIBLE_DEVICES
+        # CUDA_VISIBLE_DEVICES is set at the top of this file
+        # PyTorch will remap the selected GPU to logical "cuda:0"
         gpu = 0
         device = torch.device("cuda", gpu)
         torch.cuda.set_device(device)

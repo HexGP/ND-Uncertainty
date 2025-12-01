@@ -23,9 +23,6 @@ class UncertaintyTrainer(NDSDFTrainer):
     def __init__(self, opt, gpu):
         super().__init__(opt, gpu)
         
-        # Auto-tune uncertainty config for low-memory GPUs
-        self._auto_tune_uncertainty()
-        
         # Check if uncertainty is enabled
         use_uncertainty = getattr(self.conf.loss, 'use_uncertainty', True)
         
@@ -59,46 +56,6 @@ class UncertaintyTrainer(NDSDFTrainer):
         else:
             # Uncertainty disabled - don't create pipeline
             self.uncertainty_pipeline = None
-    
-    def _auto_tune_uncertainty(self):
-        """
-        Reduce patch size / dilation / num_rays for low-memory GPUs.
-        Controlled via cfg.uncertainty.auto_tune (bool).
-        """
-        if not hasattr(self.conf, 'uncertainty') or not getattr(self.conf.uncertainty, 'auto_tune', False):
-            return
-        
-        import torch
-        # Get device properties for the actual GPU being used
-        # When CUDA_VISIBLE_DEVICES=4, self.gpu=0 maps to physical GPU 4
-        device_id = torch.cuda.current_device()
-        props = torch.cuda.get_device_properties(device_id)
-        total_mem_gb = props.total_memory / (1024 ** 3)
-        
-        if self.gpu == 0:
-            print(f"[Auto-tune] Physical GPU {device_id}: {props.name}, {total_mem_gb:.1f}GB total memory")
-        
-        # Example heuristic: <= 16GB → more conservative settings
-        if total_mem_gb <= 16:
-            # Create uncertainty section if it doesn't exist
-            if not hasattr(self.conf, 'uncertainty'):
-                from omegaconf import OmegaConf
-                self.conf.uncertainty = OmegaConf.create({})
-            
-            # Clamp patch_size to max 3
-            current_patch_size = getattr(self.conf.uncertainty, 'patch_size', 7)
-            self.conf.uncertainty.patch_size = min(current_patch_size, 3)
-            
-            # Set dilation to 1
-            self.conf.uncertainty.dilation = 1
-            
-            # Clamp num_rays to max 2048
-            current_num_rays = getattr(self.conf.train, 'num_rays', 4096)
-            self.conf.train.num_rays = min(current_num_rays, 2048)
-            
-            if self.gpu == 0:
-                print(f"[Auto-tune] GPU has {total_mem_gb:.1f}GB. Reduced: patch_size={self.conf.uncertainty.patch_size}, "
-                      f"dilation={self.conf.uncertainty.dilation}, num_rays={self.conf.train.num_rays}")
 
     def compute_uncertainty(self, sample):
         """
