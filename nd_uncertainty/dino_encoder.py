@@ -7,6 +7,7 @@ Can either run DINOv2 on-the-fly or load precomputed features.
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torchvision.transforms as T
 from typing import Optional
 
@@ -97,10 +98,27 @@ class DinoV2Encoder(nn.Module):
         Returns:
             features: (B, C, H_feat, W_feat) DINO feature map.
                      C = 384 (ViT-S), 768 (ViT-B), or 1024 (ViT-L)
-                     H_feat = H // 14, W_feat = W // 14 (patch size is 14)
+                     H_feat = H_padded // 14, W_feat = W_padded // 14 (patch size is 14)
+                     where H_padded and W_padded are the padded image dimensions
         """
         B, C, H, W = images.shape
         assert C == 3, f"Expected RGB images (3 channels), got {C} channels"
+
+        # DINOv2 requires image dimensions to be multiples of patch size (14)
+        # Pad images to nearest multiple of 14 if needed
+        patch_size = 14
+        pad_h = (patch_size - (H % patch_size)) % patch_size
+        pad_w = (patch_size - (W % patch_size)) % patch_size
+        
+        if pad_h > 0 or pad_w > 0:
+            # Pad with zeros (black) on bottom and right
+            # F.pad format: (pad_left, pad_right, pad_top, pad_bottom)
+            images = F.pad(images, (0, pad_w, 0, pad_h), mode='constant', value=0.0)
+            H_padded = H + pad_h
+            W_padded = W + pad_w
+        else:
+            H_padded = H
+            W_padded = W
 
         # Normalize images to ImageNet stats
         images_norm = self.normalize(images)
@@ -110,12 +128,12 @@ class DinoV2Encoder(nn.Module):
         features_dict = self.backbone.forward_features(images_norm)
 
         # Extract patch tokens (normalized patch embeddings)
-        # Shape: (B, N_patches, feat_dim) where N_patches = (H//14) * (W//14)
+        # Shape: (B, N_patches, feat_dim) where N_patches = (H_padded//14) * (W_padded//14)
         patch_tokens = features_dict['x_norm_patchtokens']
 
         # Reshape to spatial feature map: (B, H_feat, W_feat, feat_dim)
-        H_feat = H // 14
-        W_feat = W // 14
+        H_feat = H_padded // patch_size
+        W_feat = W_padded // patch_size
         features = patch_tokens.view(B, H_feat, W_feat, self.feat_dim)
 
         # Convert to (B, C, H_feat, W_feat) format for easier indexing
