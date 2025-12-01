@@ -6,10 +6,13 @@ import sys, os, datetime,shutil
 from tqdm import tqdm
 
 import numpy as np
+import torch
 import torch.distributed as dist
 from torch.autograd import profiler
 from torch.nn.parallel import DistributedDataParallel as DDP
 from omegaconf import OmegaConf
+import matplotlib.pyplot as plt
+from PIL import Image
 
 from models.system import ImplicitReconSystem
 from models.loss import ImplicitReconLoss, get_psnr, compute_scale_and_shift
@@ -453,19 +456,90 @@ class Trainer():
 
                 # log per log_freq step info
                 if self.gpu == 0 and self.cur_step % self.conf.train.log_freq == 0:
-                    for key, value in losses.items(): # log loss
+                    # 1) Log all loss terms
+                    for key, value in losses.items():  # log loss
                         self.loger.add_scalar(tag="loss" + '/' + key, scalar_value=value, global_step=self.cur_step)
-                    self.loger.add_scalar(tag='scalar'+ '/psnr', scalar_value=psnr, global_step=self.cur_step)
+
+                    # 2) Standard ND-SDF scalar metrics
+                    self.loger.add_scalar(tag='scalar' + '/psnr', scalar_value=psnr, global_step=self.cur_step)
                     if self.conf.model.type == 'volsdf':
-                        self.loger.add_scalar(tag='scalar'+ '/alpha', scalar_value=1/self.model.module.density.get_beta(prog=progress), global_step=self.cur_step)
+                        self.loger.add_scalar(
+                            tag='scalar' + '/alpha',
+                            scalar_value=1 / self.model.module.density.get_beta(prog=progress),
+                            global_step=self.cur_step,
+                        )
                     elif self.conf.model.type == 'neus':
-                        self.loger.add_scalar(tag='scalar'+ '/inv_s', scalar_value=self.model.module.density.get_s(), global_step=self.cur_step)
+                        self.loger.add_scalar(
+                            tag='scalar' + '/inv_s',
+                            scalar_value=self.model.module.density.get_s(),
+                            global_step=self.cur_step,
+                        )
                     if self.conf.model.object.sdf.enable_hashgrid:
-                        self.loger.add_scalar(tag='scalar'+ '/active_levels', scalar_value=self.model.module.sdf.active_levels, global_step=self.cur_step)
-                        self.loger.add_scalar(tag='scalar'+'/normal_epsilon',scalar_value=self.model.module.sdf.normal_epsilon,global_step=self.cur_step)
-                        self.loger.add_scalar(tag='scalar' + '/lambda_curvature',scalar_value=self.loss.lambda_curvature, global_step=self.cur_step)
-                    self.loger.add_scalar(tag='scalar'+'/epoch', scalar_value=epoch, global_step=self.cur_step)
-                    self.loger.add_scalar(tag='scalar'+'lr', scalar_value=self.optimizer.param_groups[1]['lr'], global_step=self.cur_step)
+                        self.loger.add_scalar(
+                            tag='scalar' + '/active_levels',
+                            scalar_value=self.model.module.sdf.active_levels,
+                            global_step=self.cur_step,
+                        )
+                        self.loger.add_scalar(
+                            tag='scalar' + '/normal_epsilon',
+                            scalar_value=self.model.module.sdf.normal_epsilon,
+                            global_step=self.cur_step,
+                        )
+                        self.loger.add_scalar(
+                            tag='scalar' + '/lambda_curvature',
+                            scalar_value=self.loss.lambda_curvature,
+                            global_step=self.cur_step,
+                        )
+                    self.loger.add_scalar(tag='scalar' + '/epoch', scalar_value=epoch, global_step=self.cur_step)
+                    self.loger.add_scalar(tag='scalar' + 'lr', scalar_value=self.optimizer.param_groups[1]['lr'], global_step=self.cur_step)
+
+                    # 3) Uncertainty statistics + heatmap (if beta is present in the current batch)
+                    beta = sample.get('beta', None)
+                    sampling_idx = sample.get('sampling_idx', None)
+                    if beta is not None:
+                        # beta: (B, R, 1)
+                        beta_detached = beta.detach()
+                        self.loger.add_scalar('uncertainty/beta_mean', beta_detached.mean().item(), self.cur_step)
+                        self.loger.add_scalar('uncertainty/beta_std', beta_detached.std().item(), self.cur_step)
+                        # Quantiles (guard older PyTorch with try/except)
+                        try:
+                            self.loger.add_scalar('uncertainty/beta_p90', beta_detached.quantile(0.9).item(), self.cur_step)
+                            self.loger.add_scalar('uncertainty/beta_p95', beta_detached.quantile(0.95).item(), self.cur_step)
+                        except (RuntimeError, AttributeError):
+                            pass
+                        # Optional histogram
+                        try:
+                            self.loger.add_histogram('uncertainty/beta_hist', beta_detached, self.cur_step)
+                        except Exception:
+                            pass
+
+                        # 4) Save a simple per-image beta(r) heatmap for the first batch element, if indices available
+                        if sampling_idx is not None and hasattr(self, 'train_dataset'):
+                            try:
+                                B, R, _ = beta_detached.shape
+                                h = self.train_dataset.h
+                                w = self.train_dataset.w
+                                # Use first image in batch for visualization
+                                beta0 = beta_detached[0].view(-1)          # (R,)
+                                idx0 = sampling_idx[0].view(-1).long()     # (R,)
+                                beta_map = torch.zeros(h * w, device=beta0.device)
+                                beta_map[idx0] = beta0
+                                beta_map = beta_map.view(h, w)
+
+                                # Normalize to [0,1] for visualization
+                                beta_vis = (beta_map - beta_map.min()) / (beta_map.max() - beta_map.min() + 1e-6)
+                                beta_np = beta_vis.detach().cpu().numpy()
+
+                                # Apply jet colormap and save as PNG
+                                beta_img = (plt.cm.jet(beta_np)[:, :, :3] * 255).astype(np.uint8)
+                                unc_dir = os.path.join(self.plot_dir, 'uncertainty')
+                                os.makedirs(unc_dir, exist_ok=True)
+                                Image.fromarray(beta_img).save(
+                                    os.path.join(unc_dir, f'step{self.cur_step}.png')
+                                )
+                            except Exception:
+                                # Do not break training if visualization fails
+                                pass
 
 
                 ##################################### Update end Step ##############################################
