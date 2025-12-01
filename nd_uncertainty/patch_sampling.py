@@ -124,19 +124,29 @@ class DilatedPatchSampler(nn.Module):
         # Generate patch offsets
         # We want a full patch_size x patch_size grid of offsets
         # The dilation controls spacing, but we still sample all patch_size^2 positions
-        # Create offsets from -patch_size//2 to +patch_size//2
+        # Create offsets from -patch_size//2 to +patch_size//2 (inclusive)
+        # For patch_size=7: [-3, -2, -1, 0, 1, 2, 3] = 7 elements
+        patch_size_val = int(self.patch_size)  # Ensure it's an int
         offset_range = torch.arange(
-            -self.patch_size // 2,
-            self.patch_size // 2 + 1,
+            -patch_size_val // 2,
+            patch_size_val // 2 + 1,
             dtype=torch.float32,
             device=device
         )
+        
+        # Verify we have exactly patch_size elements
+        assert len(offset_range) == patch_size_val, \
+            f"offset_range has {len(offset_range)} elements, expected {patch_size_val} (patch_size={self.patch_size})"
         
         # Create a full grid: all combinations of offsets
         patch_offsets_x, patch_offsets_y = torch.meshgrid(
             offset_range, offset_range, indexing='xy'
         )
         # patch_offsets_x, patch_offsets_y: (patch_size, patch_size)
+        
+        # Verify grid shape
+        assert patch_offsets_x.shape == (patch_size_val, patch_size_val), \
+            f"patch_offsets_x shape {patch_offsets_x.shape} != ({patch_size_val}, {patch_size_val}) (patch_size={self.patch_size})"
 
         # Apply dilation: multiply offsets by dilation factor
         # This controls the spacing between sampled feature locations
@@ -146,10 +156,16 @@ class DilatedPatchSampler(nn.Module):
         # Flatten offsets for easier indexing
         patch_offsets_x = patch_offsets_x.flatten()  # (patch_size^2,)
         patch_offsets_y = patch_offsets_y.flatten()  # (patch_size^2,)
+        
+        # Verify flattened size
+        num_patches = patch_size_val * patch_size_val
+        assert len(patch_offsets_x) == num_patches, \
+            f"Flattened patch_offsets_x has {len(patch_offsets_x)} elements, expected {num_patches} (patch_size={self.patch_size})"
+        assert len(patch_offsets_y) == num_patches, \
+            f"Flattened patch_offsets_y has {len(patch_offsets_y)} elements, expected {num_patches} (patch_size={self.patch_size})"
 
         # Vectorized patch sampling
         # Expand coordinates for all rays and all patch offsets
-        num_patches = self.patch_size * self.patch_size
         
         # y_feat: (B, R) -> (B, R, 1) -> (B, R, patch_size^2)
         y_centers = y_feat.unsqueeze(-1)  # (B, R, 1)
