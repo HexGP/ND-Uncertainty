@@ -27,7 +27,7 @@ dataset:
 
   use_mono_depth: true  # apply monocular depth prior
   use_mono_normal: true  # apply monocular normal prior
-  use_mask: true # apply mask to filter abnormal priors
+  use_mask: false # apply mask to filter abnormal priors (set to false if mask_path not in dataset JSON)
   use_uncertainty: false
 
   use_pts: false
