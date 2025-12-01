@@ -2,8 +2,8 @@ desc: ""
 train:
   exp_name: replica
   max_step: 60000
-  batch_size: 4 # image batch
-  num_rays: 1024 # ray batch
+  batch_size: 2 # image batch (reduced for small GPU)
+  num_rays: 512 # ray batch (reduced for small GPU)
   custom_sampling: true # enable deflection angle guided sampling
 
   dynamic_sampling: false # 训练时num_rays动态变化，伴随occupancy grid使用。
@@ -217,10 +217,10 @@ loss:
 
 # Uncertainty pipeline configuration
 uncertainty:
-  patch_size: 7  # Size of the patch neighborhood (default 7x7)
-  dilation: 2  # Dilation factor for patch sampling (default 2)
-  auto_tune: false  # Automatically reduce patch_size/dilation/num_rays for GPUs <= 16GB
-  max_chunk_rays: 16384  # Chunk size for full-image beta rendering (to avoid OOM)
+  patch_size: 3  # Size of the patch neighborhood (reduced for small GPU)
+  dilation: 1  # Dilation factor for patch sampling (reduced for small GPU)
+  auto_tune: true  # Automatically reduce patch_size/dilation/num_rays for GPUs <= 16GB
+  max_chunk_rays: 8192  # Chunk size for full-image beta rendering (reduced for small GPU)
 
 optim:
   type: AdamW

@@ -32,13 +32,14 @@ def main():
         gpu = 0
         device = torch.device("cuda", gpu)
         torch.cuda.set_device(device)
-        
-        # Verify which physical GPU we're actually using
-        if gpu == 0:
-            physical_device_id = torch.cuda.current_device()
-            device_props = torch.cuda.get_device_properties(physical_device_id)
-            print(f"[GPU Info] Using CUDA device {physical_device_id} (physical GPU)")
-            print(f"[GPU Info] Device name: {device_props.name}, Total memory: {device_props.total_memory / (1024**3):.2f} GB")
+    
+    # Verify which physical GPU we're actually using (works for both distributed and single GPU)
+    physical_device_id = torch.cuda.current_device()
+    device_props = torch.cuda.get_device_properties(physical_device_id)
+    cuda_visible = os.environ.get('CUDA_VISIBLE_DEVICES', 'not set')
+    print(f"[GPU Info] CUDA_VISIBLE_DEVICES={cuda_visible}")
+    print(f"[GPU Info] PyTorch sees device {physical_device_id} as 'cuda:{physical_device_id}'")
+    print(f"[GPU Info] Device name: {device_props.name}, Total memory: {device_props.total_memory / (1024**3):.2f} GB")
     
     # Create trainer with uncertainty pipeline
     trainer = UncertaintyTrainer(opt, gpu)
