@@ -121,23 +121,25 @@ class UncertaintyAwareLoss(nn.Module):
         on UncertaintyAwareLoss (e.g., lambda_curvature, set_curvature_weight, etc.)
         This allows the trainer to access base_loss attributes directly.
         
-        Important: We first try PyTorch's parent __getattr__ to handle registered
+        Important: We first try PyTorch's built-in lookup to handle registered
         modules/parameters, then fall back to forwarding to base_loss attributes.
         """
-        # First, try PyTorch's parent __getattr__ (handles registered modules/parameters)
-        # This ensures base_loss (which is a registered nn.Module) is found correctly
+        # 1. Try PyTorch's built-in lookup first.
+        # This handles parameters, buffers, and registered submodules.
         try:
             return super().__getattr__(name)
         except AttributeError:
             pass
         
-        # If parent __getattr__ didn't find it, try forwarding to base_loss
-        # This handles attributes like lambda_curvature that exist on base_loss
-        try:
-            base_loss = object.__getattribute__(self, 'base_loss')
-            return getattr(base_loss, name)
-        except AttributeError:
-            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+        # 2. If PyTorch couldn't resolve it, safely forward to base_loss.
+        # Access via _modules to avoid recursion and ensure the module is registered.
+        if "base_loss" in self._modules:
+            base = super().__getattribute__("base_loss")
+            if hasattr(base, name):
+                return getattr(base, name)
+        
+        # 3. If neither the wrapper nor base_loss have it, raise a normal error.
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
     
     def forward(self, output, sample, prog):
         """
