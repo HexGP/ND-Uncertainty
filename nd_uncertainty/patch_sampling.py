@@ -142,6 +142,8 @@ class DilatedPatchSampler(nn.Module):
 
         # Vectorized patch sampling
         # Expand coordinates for all rays and all patch offsets
+        num_patches = self.patch_size * self.patch_size
+        
         # y_feat: (B, R) -> (B, R, 1) -> (B, R, patch_size^2)
         y_centers = y_feat.unsqueeze(-1)  # (B, R, 1)
         x_centers = x_feat.unsqueeze(-1)  # (B, R, 1)
@@ -151,6 +153,7 @@ class DilatedPatchSampler(nn.Module):
         patch_offsets_x_expanded = patch_offsets_x.to(device).float().unsqueeze(0).unsqueeze(0)  # (1, 1, patch_size^2)
 
         # Compute patch coordinates for all rays
+        # Broadcasting: (B, R, 1) + (1, 1, patch_size^2) -> (B, R, patch_size^2)
         y_coords = (y_centers + patch_offsets_y_expanded).clamp(0, H_feat - 1)  # (B, R, patch_size^2)
         x_coords = (x_centers + patch_offsets_x_expanded).clamp(0, W_feat - 1)  # (B, R, patch_size^2)
 
@@ -160,26 +163,26 @@ class DilatedPatchSampler(nn.Module):
 
         # Sample features using advanced indexing
         # We need to sample from feature_maps: (B, C, H_feat, W_feat)
-        # Strategy: Use gather or manual indexing with proper broadcasting
+        # Use a loop-free approach with proper shape handling
         
-        # Create batch indices for each sample
-        num_patches = self.patch_size * self.patch_size
+        # Reshape feature_maps to (B, C, H_feat * W_feat) for easier indexing
+        feature_maps_flat = feature_maps.view(B, C, H_feat * W_feat)  # (B, C, H_feat * W_feat)
+        
+        # Convert (y, x) coordinates to linear indices in feature map
+        # linear_idx = y * W_feat + x
+        W_feat_tensor = torch.tensor(W_feat, device=device, dtype=torch.long)
+        linear_indices = y_coords * W_feat_tensor + x_coords  # (B, R, patch_size^2)
+        
+        # Create batch indices: (B, R, patch_size^2)
         B_idx = torch.arange(B, device=device).view(B, 1, 1).expand(B, R, num_patches)  # (B, R, patch_size^2)
         
-        # Flatten all indices
+        # Flatten all indices for indexing
         B_idx_flat = B_idx.flatten()  # (B * R * patch_size^2,)
-        y_coords_flat = y_coords.flatten()  # (B * R * patch_size^2,)
-        x_coords_flat = x_coords.flatten()  # (B * R * patch_size^2,)
+        linear_indices_flat = linear_indices.flatten()  # (B * R * patch_size^2,)
         
-        # Sample features: feature_maps[B_idx_flat, :, y_coords_flat, x_coords_flat]
-        # This gives us (B * R * patch_size^2, C)
-        # Note: PyTorch advanced indexing requires all indices to be broadcastable
-        sampled_features = feature_maps[
-            B_idx_flat,
-            :,
-            y_coords_flat,
-            x_coords_flat
-        ]  # (B * R * patch_size^2, C)
+        # Sample features using advanced indexing
+        # feature_maps_flat[B_idx_flat, :, linear_indices_flat] -> (B * R * patch_size^2, C)
+        sampled_features = feature_maps_flat[B_idx_flat, :, linear_indices_flat]  # (B * R * patch_size^2, C)
         
         # Reshape to (B, R, patch_size^2, C) and flatten patches
         patches = sampled_features.view(B, R, num_patches, C)  # (B, R, patch_size^2, C)
