@@ -108,13 +108,16 @@ class DilatedPatchSampler(nn.Module):
             w = widths[0] if hasattr(widths, '__getitem__') else widths
 
         # Convert 1D indices to 2D pixel coordinates
-        # sampling_idx is in [0, h*w) range
+        # sampling_idx is in [0, h*w) range (original image dimensions)
         w_tensor = torch.tensor(w, device=device, dtype=torch.float32)
-        y_pix = (sampling_idx.float() // w_tensor)  # (B, R)
-        x_pix = (sampling_idx.float() % w_tensor)   # (B, R)
+        y_pix = (sampling_idx.float() // w_tensor)  # (B, R) - original pixel y
+        x_pix = (sampling_idx.float() % w_tensor)   # (B, R) - original pixel x
 
         # Map pixel coordinates to feature map coordinates
         # DINO patch size is 14, so feature map is downsampled by 14
+        # Note: Images are padded to multiples of 14, so feature map dimensions
+        # are based on padded dimensions. Pixel coordinates from original image
+        # are still valid since padding is on bottom/right edges.
         y_feat = (y_pix / 14.0).clamp(0, H_feat - 1)  # (B, R)
         x_feat = (x_pix / 14.0).clamp(0, W_feat - 1)  # (B, R)
 
@@ -160,7 +163,8 @@ class DilatedPatchSampler(nn.Module):
         # Strategy: Use gather or manual indexing with proper broadcasting
         
         # Create batch indices for each sample
-        B_idx = torch.arange(B, device=device).view(B, 1, 1).expand(B, R, patch_size * patch_size)  # (B, R, patch_size^2)
+        num_patches = self.patch_size * self.patch_size
+        B_idx = torch.arange(B, device=device).view(B, 1, 1).expand(B, R, num_patches)  # (B, R, patch_size^2)
         
         # Flatten all indices
         B_idx_flat = B_idx.flatten()  # (B * R * patch_size^2,)
@@ -178,7 +182,7 @@ class DilatedPatchSampler(nn.Module):
         ]  # (B * R * patch_size^2, C)
         
         # Reshape to (B, R, patch_size^2, C) and flatten patches
-        patches = sampled_features.view(B, R, patch_size * patch_size, C)  # (B, R, patch_size^2, C)
+        patches = sampled_features.view(B, R, num_patches, C)  # (B, R, patch_size^2, C)
         patches = patches.flatten(start_dim=2)  # (B, R, C * patch_size^2)
 
         return patches
