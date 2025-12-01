@@ -124,12 +124,13 @@ class DilatedPatchSampler(nn.Module):
         # Generate patch offsets
         # We want a full patch_size x patch_size grid of offsets
         # The dilation controls spacing, but we still sample all patch_size^2 positions
-        # Create offsets from -patch_size//2 to +patch_size//2 (inclusive)
-        # For patch_size=7: [-3, -2, -1, 0, 1, 2, 3] = 7 elements
+        # Create symmetric offsets: for patch_size=7: [-3, -2, -1, 0, 1, 2, 3] = 7 elements
+        # Use (patch_size-1)//2 to get symmetric range for both odd and even sizes
         patch_size_val = int(self.patch_size)  # Ensure it's an int
+        half_size = (patch_size_val - 1) // 2  # For 7: (7-1)//2 = 3, for 8: (8-1)//2 = 3
         offset_range = torch.arange(
-            -patch_size_val // 2,
-            patch_size_val // 2 + 1,
+            -half_size,
+            half_size + 1,
             dtype=torch.float32,
             device=device
         )
