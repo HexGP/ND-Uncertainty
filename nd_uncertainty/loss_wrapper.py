@@ -121,8 +121,10 @@ class UncertaintyAwareLoss(nn.Module):
         on UncertaintyAwareLoss (e.g., lambda_curvature, set_curvature_weight, etc.)
         This allows the trainer to access base_loss attributes directly.
         """
-        # Don't forward if trying to access base_loss itself
+        # Allow direct access to base_loss itself
         if name == 'base_loss':
+            if 'base_loss' in self.__dict__:
+                return self.__dict__['base_loss']
             raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
         
         # Forward to base_loss if it exists (check __dict__ directly to avoid recursion)
