@@ -27,9 +27,18 @@ def main():
         gpu = init_processes()
     else:
         # Single GPU training
+        # When CUDA_VISIBLE_DEVICES=4 is set, PyTorch remaps GPU 4 to be "GPU 0"
+        # So gpu=0 is correct - it will use the GPU specified in CUDA_VISIBLE_DEVICES
         gpu = 0
         device = torch.device("cuda", gpu)
         torch.cuda.set_device(device)
+        
+        # Verify which physical GPU we're actually using
+        if gpu == 0:
+            physical_device_id = torch.cuda.current_device()
+            device_props = torch.cuda.get_device_properties(physical_device_id)
+            print(f"[GPU Info] Using CUDA device {physical_device_id} (physical GPU)")
+            print(f"[GPU Info] Device name: {device_props.name}, Total memory: {device_props.total_memory / (1024**3):.2f} GB")
     
     # Create trainer with uncertainty pipeline
     trainer = UncertaintyTrainer(opt, gpu)

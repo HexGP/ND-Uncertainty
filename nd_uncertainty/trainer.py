@@ -69,8 +69,14 @@ class UncertaintyTrainer(NDSDFTrainer):
             return
         
         import torch
-        props = torch.cuda.get_device_properties(self.gpu)
+        # Get device properties for the actual GPU being used
+        # When CUDA_VISIBLE_DEVICES=4, self.gpu=0 maps to physical GPU 4
+        device_id = torch.cuda.current_device()
+        props = torch.cuda.get_device_properties(device_id)
         total_mem_gb = props.total_memory / (1024 ** 3)
+        
+        if self.gpu == 0:
+            print(f"[Auto-tune] Physical GPU {device_id}: {props.name}, {total_mem_gb:.1f}GB total memory")
         
         # Example heuristic: <= 16GB → more conservative settings
         if total_mem_gb <= 16:
