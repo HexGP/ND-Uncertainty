@@ -121,20 +121,27 @@ class DilatedPatchSampler(nn.Module):
         y_feat = (y_pix / 14.0).clamp(0, H_feat - 1)  # (B, R)
         x_feat = (x_pix / 14.0).clamp(0, W_feat - 1)  # (B, R)
 
-        # Generate dilated patch offsets
-        # Following NeRF-on-the-Go: create a patch_size x patch_size grid
-        # with dilation spacing
-        patch_offsets_x, patch_offsets_y = dilated_pixel_coordinates(
-            width=self.patch_size,
-            height=self.patch_size,
-            dilated_factor=self.dilation,
+        # Generate patch offsets
+        # We want a full patch_size x patch_size grid of offsets
+        # The dilation controls spacing, but we still sample all patch_size^2 positions
+        # Create offsets from -patch_size//2 to +patch_size//2
+        offset_range = torch.arange(
+            -self.patch_size // 2,
+            self.patch_size // 2 + 1,
+            dtype=torch.float32,
+            device=device
+        )
+        
+        # Create a full grid: all combinations of offsets
+        patch_offsets_x, patch_offsets_y = torch.meshgrid(
+            offset_range, offset_range, indexing='xy'
         )
         # patch_offsets_x, patch_offsets_y: (patch_size, patch_size)
 
-        # Center the patch around the feature location
-        patch_center = self.patch_size // 2
-        patch_offsets_x = patch_offsets_x - patch_center  # (patch_size, patch_size)
-        patch_offsets_y = patch_offsets_y - patch_center  # (patch_size, patch_size)
+        # Apply dilation: multiply offsets by dilation factor
+        # This controls the spacing between sampled feature locations
+        patch_offsets_x = patch_offsets_x * self.dilation
+        patch_offsets_y = patch_offsets_y * self.dilation
 
         # Flatten offsets for easier indexing
         patch_offsets_x = patch_offsets_x.flatten()  # (patch_size^2,)
