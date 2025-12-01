@@ -8,6 +8,7 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 import numpy as np
+import os
 
 from exp_runner import Trainer as NDSDFTrainer
 from nd_uncertainty.pipeline import UncertaintyPipeline
@@ -22,12 +23,27 @@ class UncertaintyTrainer(NDSDFTrainer):
     def __init__(self, opt, gpu):
         super().__init__(opt, gpu)
         
+        # Auto-tune uncertainty config for low-memory GPUs
+        self._auto_tune_uncertainty()
+        
         # Check if uncertainty is enabled
         use_uncertainty = getattr(self.conf.loss, 'use_uncertainty', True)
         
         if use_uncertainty:
+            # Get patch_size and dilation from config (with defaults)
+            if hasattr(self.conf, 'uncertainty'):
+                patch_size = getattr(self.conf.uncertainty, 'patch_size', 7)
+                dilation = getattr(self.conf.uncertainty, 'dilation', 2)
+            else:
+                patch_size = 7
+                dilation = 2
+            
             # Create uncertainty pipeline (DINO → patches → β(r))
-            self.uncertainty_pipeline = UncertaintyPipeline(device=torch.device(f'cuda:{gpu}'))
+            self.uncertainty_pipeline = UncertaintyPipeline(
+                patch_size=patch_size,
+                dilation=dilation,
+                device=torch.device(f'cuda:{gpu}')
+            )
             # DINO encoder is frozen by default in UncertaintyPipeline
             # Uncertainty MLP will be trainable (set to train mode when pipeline is in train mode)
             
@@ -43,6 +59,40 @@ class UncertaintyTrainer(NDSDFTrainer):
         else:
             # Uncertainty disabled - don't create pipeline
             self.uncertainty_pipeline = None
+    
+    def _auto_tune_uncertainty(self):
+        """
+        Reduce patch size / dilation / num_rays for low-memory GPUs.
+        Controlled via cfg.uncertainty.auto_tune (bool).
+        """
+        if not hasattr(self.conf, 'uncertainty') or not getattr(self.conf.uncertainty, 'auto_tune', False):
+            return
+        
+        import torch
+        props = torch.cuda.get_device_properties(self.gpu)
+        total_mem_gb = props.total_memory / (1024 ** 3)
+        
+        # Example heuristic: <= 16GB → more conservative settings
+        if total_mem_gb <= 16:
+            # Create uncertainty section if it doesn't exist
+            if not hasattr(self.conf, 'uncertainty'):
+                from omegaconf import OmegaConf
+                self.conf.uncertainty = OmegaConf.create({})
+            
+            # Clamp patch_size to max 3
+            current_patch_size = getattr(self.conf.uncertainty, 'patch_size', 7)
+            self.conf.uncertainty.patch_size = min(current_patch_size, 3)
+            
+            # Set dilation to 1
+            self.conf.uncertainty.dilation = 1
+            
+            # Clamp num_rays to max 2048
+            current_num_rays = getattr(self.conf.train, 'num_rays', 4096)
+            self.conf.train.num_rays = min(current_num_rays, 2048)
+            
+            if self.gpu == 0:
+                print(f"[Auto-tune] GPU has {total_mem_gb:.1f}GB. Reduced: patch_size={self.conf.uncertainty.patch_size}, "
+                      f"dilation={self.conf.uncertainty.dilation}, num_rays={self.conf.train.num_rays}")
 
     def compute_uncertainty(self, sample):
         """
@@ -134,6 +184,19 @@ class UncertaintyTrainer(NDSDFTrainer):
         sample['beta'] = branch_out['beta']  # (B, R, 1)
         sample['uncertainty_features'] = branch_out['patch_features']  # (B, R, C_patch)
         
+        # Log training-time uncertainty statistics (optional, per-iteration)
+        # Simple scalar stats per batch (on CPU to avoid graph issues)
+        if hasattr(self, 'loger') and self.loger is not None and hasattr(self, 'cur_step'):
+            beta_flat = beta.detach().view(-1)
+            beta_flat = torch.clamp(beta_flat, min=1e-6)
+            mean_beta = float(beta_flat.mean().item())
+            std_beta = float(beta_flat.std(unbiased=False).item())
+            
+            # Log every log_freq steps (same as other metrics)
+            if self.cur_step % getattr(self.conf.train, 'log_freq', 10) == 0:
+                self.loger.add_scalar('uncertainty/train_mean_beta', mean_beta, self.cur_step)
+                self.loger.add_scalar('uncertainty/train_std_beta', std_beta, self.cur_step)
+        
         return sample
 
     def prepare_sample(self, sample, progress=0.0):
@@ -197,3 +260,110 @@ class UncertaintyTrainer(NDSDFTrainer):
         super().set_num_rays(max_num_rays, num_samples_per_ray, num_samples)
         if hasattr(self.loss, 'set_patch_size'):
             self.loss.set_patch_size(self.num_rays)
+    
+    def _save_uncertainty_heatmap(
+        self,
+        beta_image: torch.Tensor,
+        epoch: int,
+        view_idx: int,
+    ) -> None:
+        """
+        Save β heatmap as PNG.
+        
+        Args:
+            beta_image: (H, W) tensor on CPU.
+            epoch: current epoch.
+            view_idx: index of the rendered view.
+        """
+        # Normalize to [0, 1]
+        beta_np = beta_image.numpy()
+        beta_min = float(beta_np.min())
+        beta_max = float(beta_np.max())
+        denom = max(beta_max - beta_min, 1e-8)
+        beta_norm = (beta_np - beta_min) / denom
+        
+        # Convert to 8-bit grayscale
+        beta_uint8 = (beta_norm * 255.0).clip(0, 255).astype(np.uint8)
+        img = Image.fromarray(beta_uint8, mode="L")
+        
+        # Build path: exp_dir/uncertainty/epoch_{}/view_{}.png
+        out_root = os.path.join(self.exp_dir, "uncertainty")
+        epoch_dir = os.path.join(out_root, f"epoch_{epoch:04d}")
+        os.makedirs(epoch_dir, exist_ok=True)
+        out_path = os.path.join(epoch_dir, f"view_{view_idx:03d}.png")
+        img.save(out_path)
+    
+    def plot(self, epoch, if_rendering=True, if_extract_mesh=True):
+        """
+        Override plot to add uncertainty heatmap rendering.
+        """
+        # Call parent's plot first (renders RGB, depth, normal, mesh)
+        super().plot(epoch, if_rendering=if_rendering, if_extract_mesh=if_extract_mesh)
+        
+        # Add uncertainty heatmap rendering if enabled
+        if if_rendering and self.uncertainty_pipeline is not None and self.gpu == 0:
+            try:
+                self.model.eval()
+                sample = next(iter(self.valid_dataloader))
+                sample = {k: v.cuda() for k, v in sample.items()}
+                
+                # Get image dimensions
+                H = self.valid_h
+                W = self.valid_w
+                
+                # Load full RGB for DINO (same as in compute_uncertainty)
+                idx = sample['idx'][0].item()
+                rgb = np.asarray(Image.open(self.valid_dataset.rgb_paths[idx])).astype(np.float32) / 255.0
+                
+                # Get original dimensions
+                original_h = int(self.valid_dataset.h * self.valid_downscale) if hasattr(self.valid_dataset, 'h') else rgb.shape[0]
+                original_w = int(self.valid_dataset.w * self.valid_downscale) if hasattr(self.valid_dataset, 'w') else rgb.shape[1]
+                
+                # Resize if needed
+                if rgb.shape[0] != original_h or rgb.shape[1] != original_w:
+                    import cv2
+                    rgb = cv2.resize(rgb, (original_w, original_h), interpolation=cv2.INTER_AREA)
+                
+                # Convert to tensor: (H, W, 3) -> (3, H, W) -> (1, 3, H, W)
+                device = sample['idx'].device
+                rgb_tensor = torch.from_numpy(rgb).float().permute(2, 0, 1).unsqueeze(0).to(device)
+                
+                # Extract DINO features
+                with torch.no_grad():
+                    feature_maps = self.uncertainty_pipeline.dino_encoder(rgb_tensor)  # (1, C, Hf, Wf)
+                
+                # Get max_chunk_rays from config
+                if hasattr(self.conf, 'uncertainty'):
+                    max_chunk_rays = getattr(self.conf.uncertainty, 'max_chunk_rays', 16384)
+                else:
+                    max_chunk_rays = 16384
+                
+                # Render full β map
+                beta_image, beta_stats = self.uncertainty_pipeline.render_beta_map(
+                    feature_maps=feature_maps,
+                    H=H,
+                    W=W,
+                    device=device,
+                    max_chunk_rays=max_chunk_rays,
+                )
+                
+                # Save heatmap
+                view_idx = sample['idx'][0].item()
+                self._save_uncertainty_heatmap(beta_image, epoch, view_idx)
+                
+                # Log stats to TensorBoard
+                if hasattr(self, 'loger') and self.loger is not None:
+                    global_step = epoch * len(self.valid_dataloader) + view_idx
+                    self.loger.add_scalar('uncertainty/val_mean_beta', beta_stats['mean'], global_step)
+                    self.loger.add_scalar('uncertainty/val_median_beta', beta_stats['median'], global_step)
+                    self.loger.add_scalar('uncertainty/val_std_beta', beta_stats['std'], global_step)
+                    self.loger.add_scalar('uncertainty/val_min_beta', beta_stats['min'], global_step)
+                    self.loger.add_scalar('uncertainty/val_max_beta', beta_stats['max'], global_step)
+                    self.loger.add_scalar('uncertainty/val_p25_beta', beta_stats['p25'], global_step)
+                    self.loger.add_scalar('uncertainty/val_p50_beta', beta_stats['p50'], global_step)
+                    self.loger.add_scalar('uncertainty/val_p75_beta', beta_stats['p75'], global_step)
+                    self.loger.add_scalar('uncertainty/val_p95_beta', beta_stats['p95'], global_step)
+            except Exception as e:
+                # Don't break plotting if uncertainty rendering fails
+                if self.gpu == 0:
+                    print(f"[Warning] Failed to render uncertainty heatmap: {e}")

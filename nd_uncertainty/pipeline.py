@@ -11,7 +11,7 @@ to attach β(r) to the `sample` dict.
 
 import torch
 import torch.nn as nn
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 from .dino_encoder import DinoV2Encoder
 from .patch_sampling import DilatedPatchSampler
@@ -142,3 +142,88 @@ class UncertaintyPipeline(nn.Module):
             "beta": beta,
             "patch_features": patches,
         }
+    
+    def render_beta_map(
+        self,
+        feature_maps: torch.Tensor,
+        H: int,
+        W: int,
+        device: torch.device,
+        max_chunk_rays: int = 16384,
+    ) -> Tuple[torch.Tensor, Dict[str, float]]:
+        """
+        Compute per-pixel β map and basic statistics.
+        
+        Args:
+            feature_maps: (B, C, Hf, Wf) DINO feature maps; assume B=1 here.
+            H, W: output image resolution (pixels).
+            device: torch device.
+            max_chunk_rays: chunk size to avoid OOM.
+        
+        Returns:
+            beta_image: (H, W) tensor on CPU (float32).
+            stats: dict with mean/median/std/min/max/percentiles.
+        """
+        import torch.nn.functional as F
+        B, C, Hf, Wf = feature_maps.shape
+        assert B == 1, "render_beta_map currently assumes batch size 1."
+        
+        # All pixel indices in raster order
+        num_rays = H * W
+        all_idx = torch.arange(num_rays, device=device, dtype=torch.long)
+        
+        # Height/width tensors as expected by DilatedPatchSampler
+        heights_tensor = torch.tensor([H], device=device, dtype=torch.long)
+        widths_tensor = torch.tensor([W], device=device, dtype=torch.long)
+        
+        beta_flat = torch.empty(num_rays, device=device, dtype=torch.float32)
+        
+        # Lazily build MLP if needed (same as training)
+        # We call it once on a dummy batch
+        if self.uncertainty_mlp is None:
+            with torch.no_grad():
+                dummy_idx = all_idx[:min(max_chunk_rays, num_rays)].unsqueeze(0)  # (1, N)
+                dummy_patches = self.patch_sampler(
+                    feature_maps=feature_maps,
+                    sampling_idx=dummy_idx,
+                    heights=heights_tensor,
+                    widths=widths_tensor,
+                )
+                self._build_uncertainty_mlp_if_needed(dummy_patches)
+        
+        # Chunked pass over all pixels
+        start = 0
+        while start < num_rays:
+            end = min(start + max_chunk_rays, num_rays)
+            idx_chunk = all_idx[start:end].unsqueeze(0)  # (1, N_chunk)
+            patches = self.patch_sampler(
+                feature_maps=feature_maps,
+                sampling_idx=idx_chunk,
+                heights=heights_tensor,
+                widths=widths_tensor,
+            )  # (1, N_chunk, C_patch)
+            beta_chunk = self.uncertainty_mlp(patches)  # (1, N_chunk, 1)
+            beta_chunk = beta_chunk.squeeze(0).squeeze(-1)  # (N_chunk,)
+            beta_flat[start:end] = beta_chunk
+            start = end
+        
+        # Reshape to (H, W) and move to CPU
+        beta_image = beta_flat.view(H, W).detach().cpu()
+        
+        # Clamp to positive for stats (same spirit as training)
+        beta_for_stats = torch.clamp(beta_image, min=1e-6)
+        
+        # Compute stats
+        stats = {
+            "mean": float(beta_for_stats.mean().item()),
+            "median": float(beta_for_stats.median().item()),
+            "std": float(beta_for_stats.std(unbiased=False).item()),
+            "min": float(beta_for_stats.min().item()),
+            "max": float(beta_for_stats.max().item()),
+            "p25": float(torch.quantile(beta_for_stats, 0.25).item()),
+            "p50": float(torch.quantile(beta_for_stats, 0.50).item()),
+            "p75": float(torch.quantile(beta_for_stats, 0.75).item()),
+            "p95": float(torch.quantile(beta_for_stats, 0.95).item()),
+        }
+        
+        return beta_image, stats
