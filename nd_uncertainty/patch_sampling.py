@@ -192,41 +192,30 @@ class DilatedPatchSampler(nn.Module):
         y_coords = y_coords.round().long()  # (B, R, num_patches)
         x_coords = x_coords.round().long()  # (B, R, num_patches)
 
-        # Sample features using a simpler approach: loop over batches
-        # This is more reliable than complex advanced indexing
+        # Sample features using memory-efficient advanced indexing
+        # We avoid creating any large expanded tensors.
+        #
+        # feature_maps: (B, C, H_feat, W_feat)
+        # y_coords, x_coords: (B, R, num_patches)
+        #
+        # For each batch b we index:
+        #   feat_map_b[:, y_coords_b, x_coords_b]  -> (C, R, num_patches)
+        # which is handled efficiently by PyTorch's advanced indexing.
         patches_list = []
-        
         for b in range(B):
-            # Get feature map for this batch: (C, H_feat, W_feat)
-            feat_map_b = feature_maps[b]  # (C, H_feat, W_feat)
-            
-            # Get coordinates for this batch: (R, num_patches)
-            y_coords_b = y_coords[b]  # (R, num_patches)
-            x_coords_b = x_coords[b]  # (R, num_patches)
-            
-            # Convert to linear indices: (R, num_patches)
-            linear_indices_b = y_coords_b * W_feat + x_coords_b  # (R, num_patches)
-            
-            # Flatten feature map: (C, H_feat * W_feat)
-            feat_map_flat_b = feat_map_b.view(C, H_feat * W_feat)  # (C, H_feat * W_feat)
-            
-            # Sample features: (R, num_patches) -> gather -> (C, R, num_patches)
-            # Use gather along dimension 1
-            linear_indices_b = linear_indices_b.clamp(0, H_feat * W_feat - 1)  # (R, num_patches)
-            linear_indices_gather = linear_indices_b.unsqueeze(0).expand(C, R, num_patches)  # (C, R, num_patches)
-            
-            # Expand feature map for gather: (C, H_feat * W_feat) -> (C, R, H_feat * W_feat)
-            feat_map_expanded = feat_map_flat_b.unsqueeze(1).expand(C, R, H_feat * W_feat)  # (C, R, H_feat * W_feat)
-            
-            # Gather: (C, R, num_patches)
-            sampled_b = torch.gather(feat_map_expanded, dim=2, index=linear_indices_gather)  # (C, R, num_patches)
-            
-            # Permute to (R, num_patches, C) and flatten
-            sampled_b = sampled_b.permute(1, 2, 0)  # (R, num_patches, C)
+            feat_map_b = feature_maps[b]              # (C, H_feat, W_feat)
+            y_coords_b = y_coords[b]                  # (R, num_patches)
+            x_coords_b = x_coords[b]                  # (R, num_patches)
+
+            # Advanced indexing over spatial dims: result (C, R, num_patches)
+            sampled_b = feat_map_b[:, y_coords_b, x_coords_b]  # (C, R, num_patches)
+
+            # Permute to (R, num_patches, C) and collect
+            sampled_b = sampled_b.permute(1, 2, 0)   # (R, num_patches, C)
             patches_list.append(sampled_b)
-        
-        # Stack: (B, R, num_patches, C)
-        patches = torch.stack(patches_list, dim=0)  # (B, R, num_patches, C)
-        patches = patches.flatten(start_dim=2)  # (B, R, C * num_patches)
+
+        # Stack all batches and flatten spatial patch dimensions
+        patches = torch.stack(patches_list, dim=0)   # (B, R, num_patches, C)
+        patches = patches.flatten(start_dim=2)       # (B, R, C * num_patches)
 
         return patches
