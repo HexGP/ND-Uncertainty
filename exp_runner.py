@@ -105,11 +105,25 @@ class Trainer():
         self.train_total_pixels, self.train_h, self.train_w = self.train_dataset.total_pixels, self.train_dataset.h, self.train_dataset.w
         self.valid_dataset = BaseDataset(self.conf.dataset, split='valid', num_rays=self.conf.train.num_rays, downscale=self.valid_downscale, preload=False, fewshot=getattr(self.conf.dataset, 'fewshot', False),fewshot_idx=getattr(self.conf.dataset, 'fewshot_idx',[]))
         self.valid_total_pixels, self.valid_h, self.valid_w = self.valid_dataset.total_pixels, self.valid_dataset.h, self.valid_dataset.w
-        self.train_sampler = torch.utils.data.distributed.DistributedSampler(self.train_dataset, shuffle=True)
-        self.valid_sampler = torch.utils.data.distributed.DistributedSampler(self.valid_dataset, shuffle=False)
-        self.dataloader = MultiEpochsDataLoader(self.train_dataset, batch_size=self.conf.train.batch_size,sampler=self.train_sampler,
-                                                num_workers=6, pin_memory=True, drop_last=True,persistent_workers=False)
-        self.valid_dataloader = torch.utils.data.DataLoader(self.valid_dataset, batch_size=1, sampler=self.valid_sampler) # eval rendering 1 image per plot_freq
+        
+        # Use DistributedSampler only if distributed training is initialized
+        if dist.is_initialized():
+            self.train_sampler = torch.utils.data.distributed.DistributedSampler(self.train_dataset, shuffle=True)
+            self.valid_sampler = torch.utils.data.distributed.DistributedSampler(self.valid_dataset, shuffle=False)
+        else:
+            # Single GPU training - use regular sampler
+            self.train_sampler = None  # None means no sampler (shuffle=True in DataLoader)
+            self.valid_sampler = None
+        # Create dataloaders with or without sampler depending on distributed training
+        if self.train_sampler is not None:
+            self.dataloader = MultiEpochsDataLoader(self.train_dataset, batch_size=self.conf.train.batch_size, sampler=self.train_sampler,
+                                                    num_workers=6, pin_memory=True, drop_last=True, persistent_workers=False)
+            self.valid_dataloader = torch.utils.data.DataLoader(self.valid_dataset, batch_size=1, sampler=self.valid_sampler)
+        else:
+            # Single GPU - no sampler, shuffle in DataLoader
+            self.dataloader = MultiEpochsDataLoader(self.train_dataset, batch_size=self.conf.train.batch_size, shuffle=True,
+                                                    num_workers=6, pin_memory=True, drop_last=True, persistent_workers=False)
+            self.valid_dataloader = torch.utils.data.DataLoader(self.valid_dataset, batch_size=1, shuffle=False)
         self.bound = self.train_dataset.bound if getattr(self.conf.model, 'bound', -1) == -1 else self.conf.model.bound
         self.grid_bound = self.bound if getattr(self.conf.train, 'grid_bound', -1) == -1 else self.conf.train.grid_bound
         # save fewshot images
@@ -175,8 +189,10 @@ class Trainer():
         if self.is_continue:
             self.load_checkpoint(opt.checkpoint)
 
-        # init DDP
-        self.model = DDP(self.model, device_ids=[gpu], output_device=gpu, find_unused_parameters=True)
+        # init DDP only if distributed training is initialized
+        if dist.is_initialized():
+            self.model = DDP(self.model, device_ids=[gpu], output_device=gpu, find_unused_parameters=True)
+        # Otherwise, model stays as-is (single GPU training)
 
         # tensorboard
         self.loger = SummaryWriter(self.log_dir)
