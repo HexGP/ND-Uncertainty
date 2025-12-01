@@ -115,6 +115,16 @@ class UncertaintyAwareLoss(nn.Module):
         if hasattr(self.base_loss, 'set_curvature_weight'):
             self.base_loss.set_curvature_weight(cur_step, anneal_levels, grow_rate)
     
+    def __getattr__(self, name):
+        """
+        Forward attribute access to base_loss for attributes that don't exist
+        on UncertaintyAwareLoss (e.g., lambda_curvature, set_curvature_weight, etc.)
+        This allows the trainer to access base_loss attributes directly.
+        """
+        if 'base_loss' in self.__dict__:
+            return getattr(self.base_loss, name)
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+    
     def forward(self, output, sample, prog):
         """
         Compute combined ND-SDF + uncertainty loss.
