@@ -138,7 +138,18 @@ class Trainer():
         self.model = ImplicitReconSystem(self.conf, bound=self.bound, device=gpu).cuda()
 
         # loss
-        self.loss = ImplicitReconLoss(**self.conf.loss, optim_conf=self.conf.optim)
+        # Filter out uncertainty-related parameters that ImplicitReconLoss doesn't know about
+        loss_conf = dict(self.conf.loss)
+        uncertainty_params = [
+            'use_uncertainty', 'use_ssim_uncertainty', 'use_variance_regularizer',
+            'weight_unc', 'unc_lambda_reg', 'unc_clip_min', 'unc_eps',
+            'ssim_weight', 'ssim_anneal', 'ssim_clip_max', 'ssim_window_size', 'stop_ssim_gradient',
+            'variance_weight', 'use_uncertainty_annealing', 'uncertainty_anneal_param', 'weight_unc_sched'
+        ]
+        for param in uncertainty_params:
+            loss_conf.pop(param, None)  # Remove if exists, ignore if doesn't
+        
+        self.loss = ImplicitReconLoss(**loss_conf, optim_conf=self.conf.optim)
         self.loss.set_patch_size(self.conf.train.num_rays) # num_rays->(a, b), a,b|num_rays
 
         # record pixel-wise rgb/angle
