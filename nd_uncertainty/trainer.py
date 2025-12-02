@@ -227,33 +227,50 @@ class UncertaintyTrainer(NDSDFTrainer):
     def _save_uncertainty_heatmap(
         self,
         beta_image: torch.Tensor,
+        acc_map: torch.Tensor,
         epoch: int,
         view_idx: int,
     ) -> None:
         """
-        Save β heatmap as PNG.
+        Save β heatmap as PNG using NeRF-on-the-Go's visualization approach.
         
         Args:
-            beta_image: (H, W) tensor on CPU.
+            beta_image: (H, W) tensor on CPU with uncertainty values.
+            acc_map: (H, W) tensor on CPU with accumulation/alpha values [0,1] for weighting.
             epoch: current epoch.
             view_idx: index of the rendered view.
         """
-        # Normalize to [0, 1]
+        import matplotlib.pyplot as plt
+        from matplotlib import cm
+        
         beta_np = beta_image.numpy()
-        beta_min = float(beta_np.min())
-        beta_max = float(beta_np.max())
-        denom = max(beta_max - beta_min, 1e-8)
-        beta_norm = (beta_np - beta_min) / denom
+        acc_np = acc_map.numpy() if acc_map is not None else np.ones_like(beta_np)
         
-        # Convert to 8-bit grayscale
-        beta_uint8 = (beta_norm * 255.0).clip(0, 255).astype(np.uint8)
-        img = Image.fromarray(beta_uint8, mode="L")
+        # Match NeRF-on-the-Go's approach:
+        # - Use fixed bounds lo=0.2, hi=2 (not min/max normalization)
+        # - Use turbo colormap (not jet)
+        # - Apply accumulation/weight map
         
-        # Build path: exp_dir/uncertainty/epoch_{}/view_{}.png
-        out_root = os.path.join(self.exp_dir, "uncertainty")
-        epoch_dir = os.path.join(out_root, f"epoch_{epoch:04d}")
-        os.makedirs(epoch_dir, exist_ok=True)
-        out_path = os.path.join(epoch_dir, f"view_{view_idx:03d}.png")
+        # Clip to fixed bounds and normalize to [0, 1]
+        lo, hi = 0.2, 2.0
+        beta_clipped = np.clip(beta_np, lo, hi)
+        beta_norm = (beta_clipped - lo) / (hi - lo)
+        
+        # Apply turbo colormap
+        turbo_cmap = cm.get_cmap('turbo')
+        beta_colored = turbo_cmap(beta_norm)[:, :, :3]  # (H, W, 3) in [0, 1]
+        
+        # Apply accumulation/weight map (matte effect like NeRF-on-the-Go)
+        # Pixels with low accumulation (background) get darker
+        beta_colored = beta_colored * acc_np[..., None] + 0.8 * (1 - acc_np[..., None])  # Checkerboard-like background
+        
+        # Convert to uint8 and save
+        beta_img = (beta_colored * 255.0).clip(0, 255).astype(np.uint8)
+        img = Image.fromarray(beta_img, mode="RGB")
+        
+        # Save in same location as rgb/depth/normal: plots/uncertainty/epoch{epoch}_view{idx}.png
+        os.makedirs(os.path.join(self.plot_dir, 'uncertainty'), exist_ok=True)
+        out_path = os.path.join(self.plot_dir, 'uncertainty', f'epoch{epoch}_view{view_idx}.png')
         img.save(out_path)
     
     def plot(self, epoch, if_rendering=True, if_extract_mesh=True):
@@ -273,6 +290,25 @@ class UncertaintyTrainer(NDSDFTrainer):
                 # Get image dimensions
                 H = self.valid_h
                 W = self.valid_w
+                
+                # Render the validation view to get accumulation map
+                from utils.utils import split_input
+                split_sample = split_input(sample, self.valid_total_pixels, self.chunk)
+                outputs = []
+                for s in split_sample:
+                    output = self.model(s)
+                    outputs.append({
+                        'rgb': output['rgb'].detach(),
+                        'outside': output['outside'].detach(),  # (B, R, 1) - True for background, False for foreground
+                    })
+                
+                # Merge outputs to get full image
+                from utils.utils import merge_output
+                merged_outputs = merge_output(outputs)
+                # outside: (B, H*W, 1) where True=background, False=foreground
+                outside_full = merged_outputs['outside'][0]  # (H*W, 1) for first image
+                # Convert to accumulation: False (foreground) -> 1.0, True (background) -> 0.0
+                acc_map = (~outside_full.squeeze(-1)).float().view(H, W).cpu()  # (H, W)
                 
                 # Load full RGB for DINO (same as in compute_uncertainty)
                 idx = sample['idx'][0].item()
@@ -310,9 +346,9 @@ class UncertaintyTrainer(NDSDFTrainer):
                     max_chunk_rays=max_chunk_rays,
                 )
                 
-                # Save heatmap
+                # Save heatmap with accumulation map (matching NeRF-on-the-Go)
                 view_idx = sample['idx'][0].item()
-                self._save_uncertainty_heatmap(beta_image, epoch, view_idx)
+                self._save_uncertainty_heatmap(beta_image, acc_map, epoch, view_idx)
                 
                 # Log stats to TensorBoard
                 if hasattr(self, 'loger') and self.loger is not None:

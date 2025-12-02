@@ -82,7 +82,7 @@ class Trainer():
         self.dynamic_sampling = getattr(self.conf.train, 'dynamic_sampling', False)
         self.anneal_quat_end = getattr(self.conf.optim.sched, 'anneal_quat_end', 0.2)
         self.init_num_rays = self.conf.train.num_rays
-        self.num_rays = self.conf.train.num_rays
+        self.num_rays = self.conf.train.num_rays  # HERE HEX: num_rays controls rays per image (512 vs 1024), but doesn't directly change epochs
         self.ema_decay = getattr(self.conf.optim.sched, 'ema_decay', 0.9)
         self.train_downscale = self.conf.train.train_downscale
         self.valid_downscale = self.conf.train.valid_downscale
@@ -111,8 +111,8 @@ class Trainer():
         
         # Use DistributedSampler only if distributed training is initialized
         if dist.is_initialized():
-            self.train_sampler = torch.utils.data.distributed.DistributedSampler(self.train_dataset, shuffle=True)
-            self.valid_sampler = torch.utils.data.distributed.DistributedSampler(self.valid_dataset, shuffle=False)
+        self.train_sampler = torch.utils.data.distributed.DistributedSampler(self.train_dataset, shuffle=True)
+        self.valid_sampler = torch.utils.data.distributed.DistributedSampler(self.valid_dataset, shuffle=False)
         else:
             # Single GPU training - use regular sampler
             self.train_sampler = None  # None means no sampler (shuffle=True in DataLoader)
@@ -205,7 +205,7 @@ class Trainer():
 
         # init DDP only if distributed training is initialized
         if dist.is_initialized():
-            self.model = DDP(self.model, device_ids=[gpu], output_device=gpu, find_unused_parameters=True)
+        self.model = DDP(self.model, device_ids=[gpu], output_device=gpu, find_unused_parameters=True)
         # Otherwise, model stays as-is (single GPU training)
 
         # tensorboard
@@ -340,7 +340,7 @@ class Trainer():
         # TODO:
         if self.custom_sampling or self.dynamic_sampling:
             # sampling_idx = torch.randperm(self.train_total_pixels, device=self.gpu)[:self.num_rays][None].repeat(self.batch_size, 1) # (B, num_rays), 1. all batch same sampling_idx
-            sampling_idx = sample['perm'][:, :self.num_rays] # 2. batch different random sampling_idx
+            sampling_idx = sample['perm'][:, :self.num_rays] # 2. batch different random sampling_idx  # HERE HEX: Uses num_rays to sample rays per image (512 or 1024)
             # TODO: nbfield train angle
             if_angle_guided_sampling = getattr(self.conf.optim.sched, 'if_guided_sampling', False)
             anneal_start_guided_prog = self.anneal_quat_end
@@ -388,6 +388,11 @@ class Trainer():
         # start = torch.cuda.Event(enable_timing=True)
         # end = torch.cuda.Event(enable_timing=True)
         print('start training...')
+        # HERE HEX: Total epochs = max_step // len(self.dataloader)
+        # len(self.dataloader) = number of images in dataset (e.g., 50 images = 50 batches per epoch)
+        # If max_step=60000 and len(dataloader)=50, then total_epochs = 60000 // 50 = 1200
+        # If len(dataloader)=25, then total_epochs = 60000 // 25 = 2400
+        # num_rays doesn't directly affect this, but batch_size or dataset size changes would
         print('total steps:', self.max_step, 'total epochs:', min(self.epoches, self.max_step // len(self.dataloader)))
         for epoch in range(self.last_epoch + 1, self.epoches + 1):
             # epoch_st = time.time()
@@ -513,33 +518,8 @@ class Trainer():
                         except Exception:
                             pass
 
-                        # 4) Save a simple per-image beta(r) heatmap for the first batch element, if indices available
-                        if sampling_idx is not None and hasattr(self, 'train_dataset'):
-                            try:
-                                B, R, _ = beta_detached.shape
-                                h = self.train_dataset.h
-                                w = self.train_dataset.w
-                                # Use first image in batch for visualization
-                                beta0 = beta_detached[0].view(-1)          # (R,)
-                                idx0 = sampling_idx[0].view(-1).long()     # (R,)
-                                beta_map = torch.zeros(h * w, device=beta0.device)
-                                beta_map[idx0] = beta0
-                                beta_map = beta_map.view(h, w)
-
-                                # Normalize to [0,1] for visualization
-                                beta_vis = (beta_map - beta_map.min()) / (beta_map.max() - beta_map.min() + 1e-6)
-                                beta_np = beta_vis.detach().cpu().numpy()
-
-                                # Apply jet colormap and save as PNG
-                                beta_img = (plt.cm.jet(beta_np)[:, :, :3] * 255).astype(np.uint8)
-                                unc_dir = os.path.join(self.plot_dir, 'uncertainty')
-                                os.makedirs(unc_dir, exist_ok=True)
-                                Image.fromarray(beta_img).save(
-                                    os.path.join(unc_dir, f'step{self.cur_step}.png')
-                                )
-                            except Exception:
-                                # Do not break training if visualization fails
-                                pass
+                        # Uncertainty visualization is now saved only during validation plotting (every plot_freq epochs)
+                        # to match NeRF-on-the-Go's approach and avoid creating too many images during training
 
 
                 ##################################### Update end Step ##############################################
