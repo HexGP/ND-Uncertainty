@@ -1,36 +1,51 @@
 #!/bin/bash
-# Run all 8 Replica scans simultaneously - one scan per GPU
-# GPUs used: 1, 2, 4, 5, 6, 7, 8 (avoiding GPU 0 for Rahman, GPU 3 for display)
+# Run all 8 Replica scans distributed across 3 GPUs (1, 2, 4)
+# Distribution: GPU 1 -> scans 1,4,7 | GPU 2 -> scans 2,5,8 | GPU 4 -> scans 3,6
 
-# Array of GPU IDs to use (8 GPUs for 8 scans)
-GPUS=(1 2 4 5 6 7 8 1)  # Using GPU 1 twice if you only have 7 free GPUs, or adjust as needed
+# GPU assignments: [gpu, scan_id] pairs
+# GPU 1: scans 1, 4, 7
+# GPU 2: scans 2, 5, 8
+# GPU 4: scans 3, 6
 
-# Array of scan IDs (1-8)
-SCAN_IDS=(1 2 3 4 5 6 7 8)
+declare -A GPU_SCANS
+GPU_SCANS[1]="1 4 7"
+GPU_SCANS[2]="2 5 8"
+GPU_SCANS[4]="3 6"
 
 # Array to store background process PIDs
 PIDS=()
+PORT_BASE=29525
+port_counter=0
 
-# Launch all 8 scans in parallel
-for i in {0..7}; do
-    scan_id=${SCAN_IDS[$i]}
-    gpu=${GPUS[$i]}
+# Launch scans for each GPU
+for gpu in 1 2 4; do
+    scans=${GPU_SCANS[$gpu]}
+    echo "GPU $gpu will run scans: $scans"
     
-    echo "Launching scan_id: $scan_id on GPU $gpu"
-    
-    # Run in background
-    CUDA_VISIBLE_DEVICES=$gpu torchrun --nproc_per_node=1 --master_port=$((29525 + i)) \
-        run_uncertainty.py --conf confs/replica_all8.yaml --scan_id $scan_id --data_dir '' --root_dir runs_unc_beta &
-    
-    PIDS+=($!)
-    echo "Started scan $scan_id on GPU $gpu (PID: ${PIDS[$i]})"
-    
-    # Small delay to avoid port conflicts
-    sleep 2
+    for scan_id in $scans; do
+        master_port=$((PORT_BASE + port_counter))
+        port_counter=$((port_counter + 1))
+        
+        echo "Launching scan_id: $scan_id on GPU $gpu (port $master_port)"
+        
+        # Run in background
+        CUDA_VISIBLE_DEVICES=$gpu torchrun --nproc_per_node=1 --master_port=$master_port \
+            run_uncertainty.py --conf confs/replica_all8.yaml --scan_id $scan_id --data_dir '' --root_dir runs_unc_beta &
+        
+        PIDS+=($!)
+        echo "Started scan $scan_id on GPU $gpu (PID: ${PIDS[-1]}, port: $master_port)"
+        
+        # Small delay to avoid port conflicts
+        sleep 2
+    done
 done
 
 echo ""
-echo "All 8 scans launched. PIDs: ${PIDS[@]}"
+echo "All 8 scans launched across 3 GPUs. PIDs: ${PIDS[@]}"
+echo "GPU 1: scans 1, 4, 7"
+echo "GPU 2: scans 2, 5, 8"
+echo "GPU 4: scans 3, 6"
+echo ""
 echo "Monitor with: watch -n 1 'ps aux | grep run_uncertainty'"
 echo "Kill all with: kill ${PIDS[@]}"
 
