@@ -27,7 +27,7 @@ dataset:
 
   use_mono_depth: true  # apply monocular depth prior
   use_mono_normal: true  # apply monocular normal prior
-  use_mask: false # apply mask to filter abnormal priors (disabled - dataset doesn't have mask_path)
+  use_mask: false # apply mask to filter abnormal priors (set to false if mask_path not in dataset JSON)
   use_uncertainty: false
 
   use_pts: false
@@ -191,6 +191,36 @@ loss:
   lambda_curvature: 5e-4 # curvature loss
   lambda_ab_normal: 0.04 # adaptive deflection angle normal loss
   lambda_ab_depth: 0.04 # aadaptive deflection angle depth loss
+  
+  # Uncertainty loss configuration
+  use_uncertainty: true  # Enable uncertainty loss
+  use_ssim_uncertainty: false  # Enable SSIM-based uncertainty loss (optional)
+  use_variance_regularizer: false  # Enable DINO patch variance regularization (optional)
+  weight_unc: 1.0  # Weight for uncertainty loss
+  unc_lambda_reg: 0.5  # Regularization weight (reg_mult in NeRF-OTG)
+  unc_clip_min: 0.1  # Minimum uncertainty value for clipping
+  unc_eps: 1e-3  # Epsilon for numerical stability
+  
+  # SSIM uncertainty loss parameters (if use_ssim_uncertainty=true)
+  ssim_weight: 0.5  # Weight for SSIM loss term (ssim_mult in NeRF-OTG)
+  ssim_anneal: 0.8  # Annealing parameter for SSIM (ssim_anneal in NeRF-OTG)
+  ssim_clip_max: 5.0  # Maximum value to clip SSIM loss
+  ssim_window_size: 5  # Window size for SSIM computation
+  stop_ssim_gradient: false  # Stop gradient from SSIM to RGB
+  
+  # Patch variance regularizer parameters (if use_variance_regularizer=true)
+  variance_weight: 0.1  # Weight for variance regularization (dino_var_mult in NeRF-OTG)
+  
+  # Training progress-based uncertainty annealing
+  use_uncertainty_annealing: false  # Enable uncertainty weight annealing
+  uncertainty_anneal_param: 0.8  # Annealing parameter (matches ssim_anneal)
+
+# Uncertainty pipeline configuration
+uncertainty:
+  patch_size: 7  # Size of the patch neighborhood (default 7x7)
+  dilation: 2  # Dilation factor for patch sampling (default 2)
+  auto_tune: false  # Automatically reduce patch_size/dilation/num_rays for GPUs <= 16GB (disabled - use full settings)
+  max_chunk_rays: 16384  # Chunk size for full-image beta rendering (to avoid OOM)
 
 optim:
   type: AdamW

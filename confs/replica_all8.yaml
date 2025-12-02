@@ -1,8 +1,8 @@
-desc: ""
+desc: "Run all 8 Replica scans simultaneously - one scan per GPU (8 GPUs)"
 train:
-  exp_name: replica
+  exp_name: replica_all8
   max_step: 60000
-  batch_size: 4 # image batch
+  batch_size: 2 # image batch per GPU (effective batch = 8 GPUs × 2 = 16 total)
   num_rays: 1024 # ray batch
   custom_sampling: true # enable deflection angle guided sampling
 
@@ -21,7 +21,7 @@ train:
   valid_downscale: 1 # downscale factor for validation per plot_freq
 
 dataset:
-  scan_id: '1' # id=-1 for custom dataset in data_dir
+  scan_id: '1' # This will be overridden by command line for each GPU (scans 1-8)
   data_dir: ./data/Replica
   num_images: 303
 
