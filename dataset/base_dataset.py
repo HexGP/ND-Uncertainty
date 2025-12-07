@@ -72,9 +72,18 @@ class BaseDataset(Dataset):
         self.axis = np.array([1., 1., 1.]) / np.sqrt(3)
         self.bias_angle = 5  # [3,5,10,15,30,45,60]
         # ---------------------------------------------------------------------------------------
-        self.monosdf = False
+        self.monosdf = monosdf  # Use the parameter value instead of hardcoding False
         if self.monosdf:
-            self.data_dir = conf.data_dir if str(conf.scan_id) == '-1' else os.path.join(conf.data_dir,f'{conf.scan_id}')
+            # For Replica dataset, still use scan{id} format even with monosdf=True
+            if str(conf.scan_id) == '-1':
+                self.data_dir = conf.data_dir
+            else:
+                # Check if 'scan{id}' format exists, otherwise use just '{id}'
+                scan_path = os.path.join(conf.data_dir, f'scan{conf.scan_id}')
+                if os.path.exists(scan_path):
+                    self.data_dir = scan_path
+                else:
+                    self.data_dir = os.path.join(conf.data_dir, f'{conf.scan_id}')
         else:
             # For Replica dataset, scan directories are named 'scan1', 'scan2', etc.
             if str(conf.scan_id) == '-1':

@@ -46,6 +46,7 @@ class UncertaintyTrainer(NDSDFTrainer):
             
             # Note: Uncertainty MLP will be lazily initialized on first forward pass
             # We'll add it to optimizer after first forward pass
+            # EXCEPT: if resuming from checkpoint, we need to initialize it early (see load_checkpoint override)
             
             # Replace base loss with uncertainty-aware loss wrapper
             from nd_uncertainty.loss_wrapper import UncertaintyAwareLoss
@@ -216,6 +217,8 @@ class UncertaintyTrainer(NDSDFTrainer):
         
         # Call parent's train method (handles the main training loop)
         # Loss wrapper forwards set_curvature_weight and set_patch_size to base_loss
+        # NOTE: L_reg is now added to L_unc (not to total loss separately)
+        # This ensures L_reg only affects Uncertainty MLP branch, not ND-SDF
         super().train()
     
     def set_num_rays(self, max_num_rays, num_samples_per_ray, num_samples):

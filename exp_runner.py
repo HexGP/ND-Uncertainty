@@ -111,8 +111,8 @@ class Trainer():
         
         # Use DistributedSampler only if distributed training is initialized
         if dist.is_initialized():
-        self.train_sampler = torch.utils.data.distributed.DistributedSampler(self.train_dataset, shuffle=True)
-        self.valid_sampler = torch.utils.data.distributed.DistributedSampler(self.valid_dataset, shuffle=False)
+            self.train_sampler = torch.utils.data.distributed.DistributedSampler(self.train_dataset, shuffle=True)
+            self.valid_sampler = torch.utils.data.distributed.DistributedSampler(self.valid_dataset, shuffle=False)
         else:
             # Single GPU training - use regular sampler
             self.train_sampler = None  # None means no sampler (shuffle=True in DataLoader)
@@ -205,7 +205,7 @@ class Trainer():
 
         # init DDP only if distributed training is initialized
         if dist.is_initialized():
-        self.model = DDP(self.model, device_ids=[gpu], output_device=gpu, find_unused_parameters=True)
+            self.model = DDP(self.model, device_ids=[gpu], output_device=gpu, find_unused_parameters=True)
         # Otherwise, model stays as-is (single GPU training)
 
         # tensorboard
@@ -287,9 +287,12 @@ class Trainer():
                 output = self.model(s)
                 d= {'rgb': output['rgb'].detach(), 'depth': output['depth'].detach(), 'normal': output['normal'].detach()}
                 if self.conf.model.nbfield.enabled and self.conf.dataset.use_mono_normal:
-                    d['quat'] = output['quat'].detach()
-                    d['biased_normal'] = output['biased_normal'].detach()
-                    d['biased_mono_normal'] = output['biased_mono_normal'].detach()
+                    if 'quat' in output:
+                        d['quat'] = output['quat'].detach()
+                    if 'biased_normal' in output:
+                        d['biased_normal'] = output['biased_normal'].detach()
+                    if 'biased_mono_normal' in output:
+                        d['biased_mono_normal'] = output['biased_mono_normal'].detach()
                 outputs.append(d)
             outputs = merge_output(outputs) # plot rgb、depth、normal
             plot_outputs = get_plot_data(outputs, sample, self.valid_h,self.valid_w, monocular_depth=self.train_dataset.has_mono_depth)
@@ -368,6 +371,10 @@ class Trainer():
 
     def update_train_angle(self, output, sample):
         # angle: (B, num_rays, 1), sample: dict, 'idx':(B), 'sampling_idx':(B, num_rays)
+        if 'angle' not in output:
+            # angle not computed (e.g., when biased_normal_w is not computed)
+            # Skip updating train_angle in this case
+            return
         angle = output['angle']
         train_angle = sample['train_angle']
         iter_angle = torch.maximum(self.ema_decay*train_angle, angle[:,:,0])
@@ -448,7 +455,20 @@ class Trainer():
                 if self.gpu == 0:
                     psnr = get_psnr(output['rgb'], sample['rgb'], mask=~output['outside'])
                     alpha_inv_s = 1/self.model.module.density.get_beta(prog=progress) if self.conf.model.type == 'volsdf' else self.model.module.density.get_s()
-                    loss_info = '[Losses] ' + ', '.join([f'{k}:{v.item():.4f}' for k, v in losses.items()])
+                    # Print losses in a specific order: uncertainty losses right after rgb_l1
+                    loss_order = ['eik', 'rgb_l1', 'l_ssim', 'uncertainty_loss', 'variance_regularizer', 
+                                  'rgb_mse', 'smooth', 'curvature', 'normal_l1', 'normal_cos', 'depth', 
+                                  'ab_normal_l1', 'ab_normal_cos', 'ab_biased_l1', 'ab_biased_cos', 'ab_depth', 'total']
+                    # Build loss string in order, only including losses that exist
+                    loss_items = []
+                    for key in loss_order:
+                        if key in losses:
+                            loss_items.append(f'{key}:{losses[key].item():.4f}')
+                    # Add any remaining losses not in the predefined order
+                    for key, value in losses.items():
+                        if key not in loss_order:
+                            loss_items.append(f'{key}:{value.item():.4f}')
+                    loss_info = '[Losses] ' + ', '.join(loss_items)
                     info = loss_info+f' [psnr]:{psnr.item():.4f}, [α/inv_s]:{alpha_inv_s:.4f}, [num_samples]:{self.batch_size}×{output["num_samples"]}, [num_rays]:{self.batch_size}×{self.num_rays}'
                     if self.conf.model.object.sdf.enable_hashgrid:
                         info += f', [active_levels]:{self.model.module.sdf.active_levels}/{self.model.module.sdf.num_levels}'

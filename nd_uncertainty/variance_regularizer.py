@@ -1,8 +1,13 @@
 """
 Patch Variance Regularizer
 
-Implements DINO patch similarity variance regularization from NeRF-on-the-Go.
-Based on train_utils.py lines 81-85 and models.py lines 238-262.
+Implements spatial-temporal consistency regularization for uncertainty predictions.
+Based on the paper's equations (2) and (3).
+
+Paper formula:
+- Neighbor set: N(r) = {r' | cos(f, f') > η}
+- Average uncertainty: β̄(r) = (1/|N(r)|) * Σ_{r'∈N(r)} β(r')
+- Regularization: L_reg(r) = (1/|N(r)|) * Σ_{r'∈N(r)} (β̄(r) - β(r'))²
 """
 
 import torch
@@ -12,15 +17,14 @@ import torch.nn.functional as F
 
 class PatchVarianceRegularizer(nn.Module):
     """
-    Regularizes uncertainty using DINO patch similarity variance.
+    Regularizes uncertainty using spatial-temporal consistency.
     
-    From NeRF-on-the-Go (models.py lines 238-262):
-    - Computes affinity matrix from normalized DINO patch features
-    - Finds top-k similar patches (similarity > threshold)
-    - Computes variance of uncertainty values among similar patches
-    - Penalizes high variance (encourages similar patches to have similar uncertainty)
+    Implements the paper's variance regularization (Eq. 2 & 3):
+    1. For each ray r, find neighbors N(r) with cosine similarity > η
+    2. Compute average uncertainty: β̄(r) = (1/|N(r)|) * Σ β(r')
+    3. Penalize variance: L_reg(r) = (1/|N(r)|) * Σ (β̄(r) - β(r'))²
     
-    This implements equations (2) and (3) from the NeRF-on-the-Go paper.
+    This encourages similar feature vectors to have similar uncertainty predictions.
     """
     
     def __init__(self, top_k=128, similarity_threshold=0.75, weight=0.1):
@@ -37,54 +41,55 @@ class PatchVarianceRegularizer(nn.Module):
     
     def forward(self, patch_features, beta):
         """
-        Compute patch variance regularization loss.
+        Compute variance regularization loss per paper's Eq. 2 & 3.
+        
+        For each ray r:
+        1. Find neighbors: N(r) = {r' | cos(f, f') > η}
+        2. Compute average: β̄(r) = (1/|N(r)|) * Σ_{r'∈N(r)} β(r')
+        3. Compute variance: L_reg(r) = (1/|N(r)|) * Σ_{r'∈N(r)} (β̄(r) - β(r'))²
         
         Args:
-            patch_features: (B, R, C_patch) DINO patch embeddings
-            beta: (B, R, 1) predicted uncertainty values
+            patch_features: (B, R, C_patch) DINO patch feature vectors f
+            beta: (B, R, 1) predicted uncertainty values β(r)
         
         Returns:
-            loss: scalar variance regularization loss
+            loss: scalar variance regularization loss (averaged over all rays)
         """
         B, R, C = patch_features.shape
         
-        # Flatten to (B*R, C) for batch processing
-        feat_flatten = patch_features.reshape(-1, C)  # (B*R, C)
-        beta_flatten = beta.reshape(-1, 1)  # (B*R, 1)
+        # Flatten to (B*R, C) to treat all rays in batch together
+        feat_flatten = patch_features.reshape(-1, C)  # (B*R, C) - feature vectors f
+        beta_flatten = beta.reshape(-1, 1)  # (B*R, 1) - uncertainty values β(r)
         
-        # Normalize features for cosine similarity
-        # Matches NeRF-on-the-Go line 245
+        # Normalize features for cosine similarity computation
         feat_norm = F.normalize(feat_flatten, p=2, dim=-1)  # (B*R, C)
         
-        # Compute affinity matrix (cosine similarity)
-        # Matches NeRF-on-the-Go line 246
+        # Compute cosine similarity matrix: cos(f, f')
         affinity = torch.matmul(feat_norm, feat_norm.t())  # (B*R, B*R)
         
-        # Find top-k similar patches for each patch
-        # Matches NeRF-on-the-Go lines 249-250
+        # Find top-k similar rays for each ray r
+        # This finds candidates for N(r) = {r' | cos(f, f') > η}
         topk_values, topk_indices = torch.topk(affinity, k=min(self.top_k, B*R), dim=-1)  # (B*R, top_k)
-        value_mask = (topk_values > self.similarity_threshold)  # (B*R, top_k)
+        value_mask = (topk_values > self.similarity_threshold)  # (B*R, top_k) - binary mask for N(r)
         
-        # Get uncertainty values for similar patches
-        # Matches NeRF-on-the-Go line 254
+        # Get uncertainty values for neighbors: β(r') for r' ∈ N(r)
         uncer_nn = beta_flatten[topk_indices] * value_mask.float().unsqueeze(-1)  # (B*R, top_k, 1)
         uncer_nn = uncer_nn.squeeze(-1)  # (B*R, top_k)
         
-        # Compute mean uncertainty for each patch's neighbors
-        # Matches NeRF-on-the-Go lines 255-257
-        sums = (uncer_nn * value_mask.float()).sum(dim=-1)  # (B*R,)
-        counts = value_mask.float().sum(dim=-1) + 1e-6  # (B*R,)
-        uncer_means = sums / counts  # (B*R,)
+        # Paper Eq. 2: Compute average uncertainty for each ray's neighbors
+        # β̄(r) = (1/|N(r)|) * Σ_{r'∈N(r)} β(r')
+        sums = (uncer_nn * value_mask.float()).sum(dim=-1)  # (B*R,) - sum of β(r') for r' ∈ N(r)
+        counts = value_mask.float().sum(dim=-1) + 1e-6  # (B*R,) - |N(r)|, add epsilon to avoid division by zero
+        uncer_means = sums / counts  # (B*R,) - β̄(r) for each ray r
         
-        # Compute variance of uncertainty among similar patches
-        # Matches NeRF-on-the-Go lines 258-259
-        uncer_means_expanded = uncer_means.unsqueeze(-1)  # (B*R, 1)
-        squared_diffs = (uncer_nn - uncer_means_expanded) ** 2  # (B*R, top_k)
-        uncer_variances = (squared_diffs * value_mask.float()).sum(dim=-1) / counts  # (B*R,)
+        # Paper Eq. 3: Compute variance regularization for each ray
+        # L_reg(r) = (1/|N(r)|) * Σ_{r'∈N(r)} (β̄(r) - β(r'))²
+        uncer_means_expanded = uncer_means.unsqueeze(-1)  # (B*R, 1) - β̄(r) expanded to match shape
+        squared_diffs = (uncer_nn - uncer_means_expanded) ** 2  # (B*R, top_k) - (β̄(r) - β(r'))²
+        uncer_variances = (squared_diffs * value_mask.float()).sum(dim=-1) / counts  # (B*R,) - L_reg(r)
         
-        # Average variance across all patches
-        # Matches NeRF-on-the-Go line 84: jnp.mean(rendering['uncer_var'])
-        variance_loss = uncer_variances.mean()
+        # Average L_reg(r) across all rays to get final loss
+        variance_loss = uncer_variances.mean()  # scalar
         
         # Apply weight
         return self.weight * variance_loss

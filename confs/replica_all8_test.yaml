@@ -1,7 +1,7 @@
-desc: "Run all 8 Replica scans simultaneously - one scan per GPU (8 GPUs)"
+desc: "Quick test run - 2000 steps for testing"
 train:
-  exp_name: replica_all8
-  max_step: 60000
+  exp_name: replica_all8_test
+  max_step: 2000  # Quick test - reduced from 60000
   batch_size: 4 # image batch per GPU (matches replica.yaml default, gives 2400 epochs with 100 images)
   num_rays: 1024 # ray batch
   custom_sampling: true # enable deflection angle guided sampling
@@ -11,8 +11,8 @@ train:
   num_samples_per_ray: 512
 
   log_freq: 10 # per step
-  plot_freq: 240 # per epoch
-  save_freq: 240
+  plot_freq: 10 # per epoch (changed from 240 for testing - save plots every 10 epochs)
+  save_freq: 10 # per epoch (changed from 240 for testing)
   chunk: 1024
   mesh_resolution: 512 # intermediate mesh resolution
   block_resolution: 512
@@ -204,6 +204,8 @@ loss:
   # SSIM uncertainty loss parameters (ND-SDF paper Eq. 8 & 9)
   ssim_window_size: 5  # Window size for SSIM computation
   stop_ssim_gradient: true  # Stop gradient from SSIM to RGB (REQUIRED for decoupled training per paper)
+  ssim_anneal: 0.8  # Annealing parameter for SSIM rate scaling (100-1000x multiplier, matches NeRF-on-the-Go)
+  ssim_clip_max: 5.0  # Maximum value to clip scaled SSIM loss (matches NeRF-on-the-Go)
   
   # Patch variance regularizer parameters (ND-SDF paper Eq. 2 & 3)
   variance_weight: 0.1  # Weight for variance regularization
@@ -237,3 +239,4 @@ optim:
     re_weight_params: [25, 15, 2]
     if_unbiased: true
     unbiased_params: [25,10]
+

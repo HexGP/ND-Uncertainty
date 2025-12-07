@@ -434,7 +434,8 @@ class ImplicitReconLoss(nn.Module):
         angle_guided_weight=None
         anneal_start_guided_weighting = self.anneal_quat_end
         anneal_end_regu = 0.0
-        if if_angle_guided_weighting and prog>anneal_start_guided_weighting:
+        angle_guided_weight = None
+        if if_angle_guided_weighting and prog>anneal_start_guided_weighting and 'angle' in output:
             angle_guided_weight = angle2weight(output['angle'], self.re_weight_params) # (B,R,1)
             angle_guided_weight[~foreground_mask] = 1.0  # only for foreground sdf scene
 
@@ -455,7 +456,7 @@ class ImplicitReconLoss(nn.Module):
             loss += self.lambda_rgb_mse(prog) * loss_rgb_mse
             losses['rgb_mse'] = loss_rgb_mse
         # 4. smooth_loss
-        if self.lambda_smooth(prog) > 0:
+        if self.lambda_smooth(prog) > 0 and 'gradient_smooth' in output:
             loss_smooth = smooth_loss(output['gradient_smooth'], output['gradient_smooth_neighbor'], mask=(~outside)&foreground_mask)
             loss += self.lambda_smooth(prog) * loss_smooth
             losses['smooth'] = loss_smooth
@@ -501,7 +502,7 @@ class ImplicitReconLoss(nn.Module):
             loss += self.lambda_nb_regu(prog) * loss_nb_regu
             losses['nb_regu'] = loss_nb_regu
         # 12. adaptive_biased_normal
-        if self.lambda_ab_normal(prog) > 0:
+        if self.lambda_ab_normal(prog) > 0 and 'biased_normal_w' in output and 'quat' in output and 'normal_w' in output:
             # TODO: 自适应加权的normal loss
             loss_ab_normal_l1, loss_ab_normal_cos, loss_ab_biased_l1, loss_ab_biased_cos =\
                 adaptive_biased_normal_loss(output['quat'], output['normal_w'], output['biased_normal_w'], sample['normal'], sample['pose'], mask=(~outside)&foreground_mask&mask)
@@ -511,12 +512,12 @@ class ImplicitReconLoss(nn.Module):
             losses['ab_biased_l1'] = loss_ab_biased_l1
             losses['ab_biased_cos'] = loss_ab_biased_cos
         # 13. ab_depth
-        if self.lambda_ab_depth(prog) > 0:
+        if self.lambda_ab_depth(prog) > 0 and 'angle' in output:
             lambda_ab_depth = adaptive_depth_loss(output['angle'], output['depth'], 50*sample['depth']+0.5, mask=(~outside)&foreground_mask&mask, monocular=True, patch_size=self.patch_size)
             loss += self.lambda_ab_depth(prog) * lambda_ab_depth
             losses['ab_depth'] = lambda_ab_depth
         # 14. ab_smooth
-        if self.lambda_ab_smooth(prog) > 0:
+        if self.lambda_ab_smooth(prog) > 0 and 'gradient_smooth' in output and 'angle' in output:
             loss_ab_smooth = adaptive_smooth_loss(output['angle'], output['gradient_smooth'], output['gradient_smooth_neighbor'], mask=(~outside)&foreground_mask)
             loss += self.lambda_ab_smooth(prog) * loss_ab_smooth
             losses['ab_smooth'] = loss_ab_smooth

@@ -37,7 +37,7 @@ class UncertaintyAwareLoss(nn.Module):
         uncertainty_params = [
             'use_uncertainty', 'use_ssim_uncertainty', 'use_variance_regularizer',
             'weight_unc', 'unc_lambda_reg', 'unc_clip_min', 'unc_eps',
-            'ssim_weight', 'ssim_anneal', 'ssim_clip_max', 'ssim_window_size', 'stop_ssim_gradient',
+            'ssim_window_size', 'stop_ssim_gradient', 'ssim_anneal', 'ssim_clip_max',
             'variance_weight', 'use_uncertainty_annealing', 'uncertainty_anneal_param', 'weight_unc_sched'
         ]
         for param in uncertainty_params:
@@ -56,29 +56,34 @@ class UncertaintyAwareLoss(nn.Module):
             self.use_uncertainty_annealing = False
             return
         
-        # Initialize uncertainty loss
-        # Get config values with defaults matching NeRF-on-the-Go
-        lambda_reg = getattr(conf.loss, 'unc_lambda_reg', 0.5)  # reg_mult in NeRF-OTG
-        uncer_clip_min = getattr(conf.loss, 'unc_clip_min', 0.1)  # uncer_clip_min in NeRF-OTG
-        use_ssim = getattr(conf.loss, 'use_ssim_uncertainty', False)
-        ssim_mult = getattr(conf.loss, 'ssim_weight', 0.5)  # ssim_mult in NeRF-OTG
-        ssim_anneal = getattr(conf.loss, 'ssim_anneal', 0.8)  # ssim_anneal in NeRF-OTG
-        ssim_clip_max = getattr(conf.loss, 'ssim_clip_max', 5.0)  # ssim_clip_max in NeRF-OTG
-        stop_ssim_gradient = getattr(conf.loss, 'stop_ssim_gradient', False)
+        # Initialize uncertainty loss (ND-SDF paper approach)
+        # Get config values with defaults matching ND-SDF paper
+        lambda_reg = getattr(conf.loss, 'unc_lambda_reg', 0.5)  # λ1 in paper Eq. 9
+        uncer_clip_min = getattr(conf.loss, 'unc_clip_min', 0.1)
+        use_ssim = getattr(conf.loss, 'use_ssim_uncertainty', True)  # Default True per paper
+        ssim_window_size = getattr(conf.loss, 'ssim_window_size', 5)
+        stop_ssim_gradient = getattr(conf.loss, 'stop_ssim_gradient', True)  # Default True for decoupling
+        ssim_anneal = getattr(conf.loss, 'ssim_anneal', 0.8)  # SSIM rate annealing (matches NeRF-on-the-Go)
+        ssim_clip_max = getattr(conf.loss, 'ssim_clip_max', 5.0)  # SSIM loss clipping (matches NeRF-on-the-Go)
         
         self.unc_loss = UncertaintyColorLoss(
             lambda_reg=lambda_reg,
             uncer_clip_min=uncer_clip_min,
+            eps=getattr(conf.loss, 'unc_eps', 1e-3),
             use_ssim=use_ssim,
-            ssim_mult=ssim_mult,
+            ssim_window_size=ssim_window_size,
+            stop_ssim_gradient=stop_ssim_gradient,
             ssim_anneal=ssim_anneal,
             ssim_clip_max=ssim_clip_max,
-            stop_ssim_gradient=stop_ssim_gradient,
         )
         
-        # Initialize patch variance regularizer (optional)
-        use_variance_reg = getattr(conf.loss, 'use_variance_regularizer', False)
-        variance_weight = getattr(conf.loss, 'variance_weight', 0.1)  # dino_var_mult in NeRF-OTG
+        # Initialize patch variance regularizer (ND-SDF paper Eq. 2 & 3)
+        # This regularizer is fine to use - it doesn't break decoupling because:
+        # - It only uses β values and DINO features (not ND-SDF predictions)
+        # - It doesn't cause gradients to flow from uncertainty loss to NeRF model
+        # - It's a purely internal smoothing mechanism for uncertainty MLP
+        use_variance_reg = getattr(conf.loss, 'use_variance_regularizer', True)  # Default True per paper
+        variance_weight = getattr(conf.loss, 'variance_weight', 0.1)
         if use_variance_reg:
             self.variance_reg = PatchVarianceRegularizer(
                 top_k=128,
@@ -188,30 +193,53 @@ class UncertaintyAwareLoss(nn.Module):
         else:
             mask = None
         
-        # Compute uncertainty-weighted color loss
-        # Pass train_frac for SSIM annealing if SSIM is enabled
-        train_frac_for_ssim = prog if (hasattr(self.unc_loss, 'use_ssim') and self.unc_loss.use_ssim) else None
-        L_unc = self.unc_loss(rgb_pred, rgb_gt, beta, mask=mask, train_frac=train_frac_for_ssim)
+        # Compute SSIM-based uncertainty loss (ND-SDF paper Eq. 9)
+        # This loss trains ONLY the uncertainty MLP, not the NeRF model
+        # Gradients are stopped from flowing back to RGB predictions (decoupling)
+        # Pass train_frac (prog) for SSIM rate scaling (100-1000x multiplier)
+        L_unc, L_ssim_mean = self.unc_loss(rgb_pred, rgb_gt, beta, mask=mask, train_frac=prog)
         
-        # Get uncertainty loss weight (may be scheduled)
-        weight_unc = self.weight_unc_fn(prog)
-        
-        # Apply training progress-based uncertainty annealing (from NeRF-on-the-Go lines 176-177)
-        if self.use_uncertainty_annealing:
-            # Adjust uncertainty weight based on training progress
-            # Matches NeRF-on-the-Go: uncer_rate = 1 + 1 * bias(train_frac, ssim_anneal)
-            uncer_rate = 1.0 + bias_function(prog, self.uncertainty_anneal_param)
-            weight_unc = weight_unc * uncer_rate
-        
-        # Add uncertainty loss to total
-        losses['uncertainty_loss'] = L_unc
-        losses['total'] = losses['total'] + weight_unc * L_unc
-        
-        # Add patch variance regularization if enabled
+        # Compute patch variance regularization (ND-SDF paper Eq. 2 & 3)
+        # This regularizer encourages spatial-temporal consistency in uncertainty predictions
+        # IMPORTANT: L_reg is added to L_unc (not to total loss separately)
+        # This ensures it only influences Uncertainty MLP branch, not ND-SDF training
+        L_var = None
         if self.variance_reg is not None and 'uncertainty_features' in sample:
             patch_features = sample['uncertainty_features']  # (B, R, C_patch)
             L_var = self.variance_reg(patch_features, beta)
             losses['variance_regularizer'] = L_var
-            losses['total'] = losses['total'] + L_var
+            # Add L_reg to uncertainty loss (not to total loss separately)
+            # This way L_reg only affects Uncertainty MLP, not ND-SDF
+            L_unc = L_unc + L_var
+        
+        # Get uncertainty loss weight (may be scheduled)
+        weight_unc = self.weight_unc_fn(prog)
+        
+        # Apply training progress-based uncertainty annealing (optional)
+        if self.use_uncertainty_annealing:
+            # Adjust uncertainty weight based on training progress
+            uncer_rate = 1.0 + bias_function(prog, self.uncertainty_anneal_param)
+            weight_unc = weight_unc * uncer_rate
+        
+        # ND-SDF Paper Approach: DECOUPLED Training
+        # 
+        # Key principle: Uncertainty MLP training is SEPARATE from NeRF training
+        # - ND-SDF trains with standard RGB loss (kept above, not replaced)
+        # - Uncertainty MLP trains with SSIM-based uncertainty loss + L_reg (added here)
+        # - Gradients are stopped to prevent coupling (handled in UncertaintyColorLoss)
+        #
+        # This ensures:
+        # 1. Uncertainty prediction doesn't influence NeRF color rendering
+        # 2. NeRF color errors don't directly affect uncertainty MLP training
+        # 3. Uncertainty learns to detect structural differences (distractors) via SSIM
+        # 4. L_reg only affects Uncertainty MLP (beta comes from MLP, DINO is frozen)
+        
+        # Add uncertainty loss (which now includes L_reg) to total
+        # This only affects uncertainty MLP gradients (RGB is detached in UncertaintyColorLoss)
+        losses['uncertainty_loss'] = L_unc
+        losses['l_ssim'] = L_ssim_mean  # LSSIM value for logging (Eq. 8)
+        # Add uncertainty loss to existing ND-SDF total (not replacing, just adding)
+        base_total = losses['total']  # This is the sum of all ND-SDF losses (rgb_l1, rgb_mse, eik, smooth, curvature, etc.)
+        losses['total'] = base_total + weight_unc * L_unc
         
         return losses
