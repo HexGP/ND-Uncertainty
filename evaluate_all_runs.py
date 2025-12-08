@@ -49,36 +49,60 @@ def find_latest_mesh(plots_dir):
     return mesh_files[0]
 
 
-def find_most_recent_experiment(runs_dir, exp_name_pattern):
-    """Find the most recent experiment matching the pattern."""
+def find_most_recent_experiment(runs_dir, exp_name, scan_idx):
+    """Find the most recent experiment matching the pattern.
+    
+    Looks for directories that start with exp_name and end with _{scan_idx}.
+    Handles both 'replica_1' and 'replica_all8_1' patterns.
+    Also handles both structures: with timestamp subdirectories and without.
+    """
     if not os.path.exists(runs_dir):
         return None
     
-    # Find all experiments matching the pattern
+    # Find all experiments matching the pattern: exp_name*_{scan_idx}
+    # This handles both 'replica_1' and 'replica_all8_1'
+    pattern = f"^{re.escape(exp_name)}.*_{scan_idx}$"
     matching_exps = []
+    
     for item in os.listdir(runs_dir):
-        if re.match(exp_name_pattern, item):
+        if re.match(pattern, item):
             exp_path = os.path.join(runs_dir, item)
             if os.path.isdir(exp_path):
-                # Find most recent timestamp directory
+                # Check if there are timestamp subdirectories
                 timestamp_dirs = []
+                has_timestamp_dirs = False
+                
                 for subdir in os.listdir(exp_path):
                     subdir_path = os.path.join(exp_path, subdir)
                     if os.path.isdir(subdir_path):
                         # Check if it's a timestamp directory (YYYY-MM-DD_HH-MM-SS format)
                         if re.match(r'\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}', subdir):
                             timestamp_dirs.append((subdir_path, subdir))
+                            has_timestamp_dirs = True
                 
-                if timestamp_dirs:
-                    # Sort by timestamp, most recent first
-                    timestamp_dirs.sort(key=lambda x: x[1], reverse=True)
-                    matching_exps.append((timestamp_dirs[0][0], timestamp_dirs[0][1]))
+                if has_timestamp_dirs:
+                    # Structure with timestamp subdirectories
+                    if timestamp_dirs:
+                        # Sort by timestamp, most recent first
+                        timestamp_dirs.sort(key=lambda x: x[1], reverse=True)
+                        matching_exps.append((timestamp_dirs[0][0], timestamp_dirs[0][1], 'timestamp'))
+                else:
+                    # Structure without timestamp subdirectories (flat structure)
+                    # Use the experiment directory itself, sorted by modification time
+                    matching_exps.append((exp_path, os.path.getmtime(exp_path), 'mtime'))
     
     if not matching_exps:
         return None
     
     # Return the most recent one
-    matching_exps.sort(key=lambda x: x[1], reverse=True)
+    # If using timestamps, sort by timestamp string; if using mtime, sort by mtime
+    if matching_exps[0][2] == 'timestamp':
+        # Timestamp-based sorting
+        matching_exps.sort(key=lambda x: x[1], reverse=True)
+    else:
+        # Modification time-based sorting
+        matching_exps.sort(key=lambda x: x[1], reverse=True)
+    
     return matching_exps[0][0]
 
 
@@ -216,12 +240,11 @@ def main():
     print("Finding most recent experiments for each scan...")
     for idx, scan in enumerate(scans):
         scan_idx = idx + 1
-        exp_name_pattern = f"{args.exp_name}_{scan_idx}"
         
         print(f"\nProcessing {scan} (scan{scan_idx})...")
         
-        # Find most recent experiment
-        exp_dir = find_most_recent_experiment(args.runs_dir, exp_name_pattern)
+        # Find most recent experiment (handles both 'replica_1' and 'replica_all8_1' patterns)
+        exp_dir = find_most_recent_experiment(args.runs_dir, args.exp_name, scan_idx)
         if exp_dir is None:
             print(f"  No experiment found for {scan}")
             results[scan] = None
