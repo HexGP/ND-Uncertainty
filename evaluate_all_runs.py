@@ -149,18 +149,76 @@ def fix_mesh_if_scene(mesh_file):
     """If mesh file is a Scene (multiple meshes), convert to single mesh and save."""
     try:
         import trimesh
+        
+        # First check if it's already a valid mesh (not a Scene)
         mesh = trimesh.load(mesh_file, process=False)
+        if isinstance(mesh, trimesh.Trimesh):
+            # Already a valid mesh, return as-is
+            return mesh_file
         
         # Check if it's a Scene (multiple meshes)
         if isinstance(mesh, trimesh.Scene):
             print(f"  Converting Scene (multiple meshes) to single mesh...")
-            # Combine all meshes in the scene into one
-            combined_mesh = trimesh.util.concatenate([mesh.geometry[key] for key in mesh.geometry.keys()])
+            
+            # Get all meshes from the scene
+            meshes_to_combine = []
+            for key in mesh.geometry.keys():
+                geom = mesh.geometry[key]
+                if isinstance(geom, trimesh.Trimesh):
+                    meshes_to_combine.append(geom)
+            
+            if not meshes_to_combine:
+                print(f"  Warning: Scene has no valid meshes, using original")
+                return mesh_file
+            
+            # Combine all meshes
+            try:
+                combined_mesh = trimesh.util.concatenate(meshes_to_combine)
+            except Exception as e:
+                print(f"  Warning: Concatenation failed ({e}), trying alternative method...")
+                # Alternative: just use the first mesh if concatenation fails
+                if meshes_to_combine:
+                    combined_mesh = meshes_to_combine[0]
+                    if len(meshes_to_combine) > 1:
+                        print(f"  Using first mesh only (out of {len(meshes_to_combine)} meshes)")
+                else:
+                    print(f"  Error: No valid meshes to combine")
+                    return mesh_file
+            
             # Save the combined mesh to a temporary file
-            temp_file = mesh_file.replace('.ply', '_combined.ply')
+            # Use a unique name to avoid conflicts with previous runs
+            import time
+            base_name = mesh_file.replace('.ply', '').replace('_combined', '')
+            temp_file = f"{base_name}_fixed_{int(time.time())}.ply"
             combined_mesh.export(temp_file)
+            
+            # Verify the exported file is valid (not a Scene)
+            verify_mesh = trimesh.load(temp_file, process=False)
+            if isinstance(verify_mesh, trimesh.Scene):
+                print(f"  Error: Combined mesh is still a Scene after export")
+                # Try exporting as a different format or using scene.dump
+                try:
+                    # Export the scene as a single mesh by dumping and loading
+                    scene_file = temp_file.replace('.ply', '_scene.ply')
+                    mesh.export(scene_file)
+                    # Try to load and extract
+                    loaded = trimesh.load(scene_file, process=False)
+                    if isinstance(loaded, trimesh.Trimesh):
+                        os.rename(scene_file, temp_file)
+                        print(f"  Created fixed mesh: {temp_file}")
+                        return temp_file
+                    else:
+                        print(f"  Error: Cannot convert Scene to single mesh")
+                        return mesh_file
+                except Exception as e2:
+                    print(f"  Error: Failed to fix Scene ({e2}), using original")
+                    return mesh_file
+            
             print(f"  Created combined mesh: {temp_file}")
             return temp_file
+        
+        # Unknown type
+        print(f"  Warning: Unknown mesh type: {type(mesh)}, using original")
         return mesh_file
     except Exception as e:
         print(f"  Warning: Could not fix Scene mesh: {e}, using original")
