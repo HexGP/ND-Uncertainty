@@ -145,8 +145,33 @@ def parse_eval_output(output_text):
     }
 
 
+def fix_mesh_if_scene(mesh_file):
+    """If mesh file is a Scene (multiple meshes), convert to single mesh and save."""
+    try:
+        import trimesh
+        mesh = trimesh.load(mesh_file, process=False)
+        
+        # Check if it's a Scene (multiple meshes)
+        if isinstance(mesh, trimesh.Scene):
+            print(f"  Converting Scene (multiple meshes) to single mesh...")
+            # Combine all meshes in the scene into one
+            combined_mesh = trimesh.util.concatenate([mesh.geometry[key] for key in mesh.geometry.keys()])
+            # Save the combined mesh to a temporary file
+            temp_file = mesh_file.replace('.ply', '_combined.ply')
+            combined_mesh.export(temp_file)
+            print(f"  Created combined mesh: {temp_file}")
+            return temp_file
+        return mesh_file
+    except Exception as e:
+        print(f"  Warning: Could not fix Scene mesh: {e}, using original")
+        return mesh_file
+
+
 def evaluate_mesh(rec_mesh, gt_mesh, cull_mesh_script=None, data_dir=None, scan_idx=None):
     """Evaluate a mesh file and return metrics."""
+    # Fix Scene objects before evaluation
+    rec_mesh = fix_mesh_if_scene(rec_mesh)
+    
     if USE_DIRECT_IMPORT:
         # Use direct import
         try:
@@ -180,13 +205,15 @@ def evaluate_mesh(rec_mesh, gt_mesh, cull_mesh_script=None, data_dir=None, scan_
             print(f"Error: eval_recon.py not found. Tried: {possible_paths}")
             return None
         
+        # rec_mesh is already fixed by fix_mesh_if_scene at the start of evaluate_mesh
         cmd = f"python {eval_script} --rec_mesh {rec_mesh} --gt_mesh {gt_mesh}"
         try:
             output = subprocess.check_output(cmd, shell=True, stderr=subprocess.STDOUT).decode("utf-8")
             return parse_eval_output(output)
         except subprocess.CalledProcessError as e:
             print(f"Error running evaluation: {e}")
-            print(f"Output: {e.output.decode('utf-8') if e.output else 'No output'}")
+            error_output = e.output.decode('utf-8') if e.output else 'No output'
+            print(f"Output: {error_output[:500]}")  # Show first 500 chars
             return None
 
 
@@ -212,10 +239,16 @@ def cull_mesh_if_needed(mesh_file, data_dir, scan_idx, scan_name, out_dir):
         if os.path.exists(cameras_file) and os.path.exists(traj_file):
             cmd = f"python {cull_script} --input_mesh {mesh_file} --input_scalemat {cameras_file} --traj {traj_file} --output_mesh {cull_mesh_out}"
             try:
-                subprocess.run(cmd, shell=True, check=True, capture_output=True)
-                return cull_mesh_out
+                result = subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
+                if os.path.exists(cull_mesh_out):
+                    return cull_mesh_out
+                else:
+                    print(f"  Warning: Cull mesh command succeeded but output file not found")
+                    return mesh_file
             except subprocess.CalledProcessError as e:
-                print(f"Warning: Failed to cull mesh: {e}")
+                print(f"  Warning: Failed to cull mesh (exit code {e.returncode})")
+                if e.stderr:
+                    print(f"  Cull error: {e.stderr[:200]}")  # Show first 200 chars of error
                 return mesh_file
     
     return mesh_file
