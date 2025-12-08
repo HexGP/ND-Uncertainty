@@ -43,6 +43,8 @@ ENV/
 
 # Training outputs
 runs/
+runs_test_unc/
+runs_unc_beta/
 logs/
 *.log
 
@@ -51,6 +53,7 @@ data/
 
 # Evals (excluded as requested)
 evals/
+evaluation_results/
 
 # OS
 .DS_Store
