@@ -30,13 +30,15 @@ if __name__ == "__main__":
 
     # cumesh
     cull_mesh_out = os.path.join(out_dir, f"cull_{scan}.ply")
-    cmd = f"python cull_mesh.py --input_mesh {ply_file} --input_scalemat {data_dir}/scan{idx}/cameras.npz --traj {data_dir}/scan{idx}/traj.txt --output_mesh {cull_mesh_out}"
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    cmd = f"python {os.path.join(script_dir, 'cull_mesh.py')} --input_mesh {ply_file} --input_scalemat {data_dir}/scan{idx}/cameras.npz --traj {data_dir}/scan{idx}/traj.txt --output_mesh {cull_mesh_out}"
     print(cmd)
     os.system(cmd)
 
-    gt_mesh = trimesh.load(f"/data/monosdf/Replica/cull_GTmesh/{scan}.ply")
+    gt_mesh_path = os.path.join(data_dir, 'cull_GTmesh', f"{scan}.ply")
+    gt_mesh = trimesh.load(gt_mesh_path)
     gt_mesh.export(os.path.join(out_dir, f"{scan}_gt.ply"))
-    cmd = f"python eval_recon.py --rec_mesh {cull_mesh_out} --gt_mesh {data_dir}/cull_GTmesh/{scan}.ply"
+    cmd = f"python {os.path.join(script_dir, 'eval_recon.py')} --rec_mesh {cull_mesh_out} --gt_mesh {gt_mesh_path}"
     print(cmd)
     # accuracy_rec, completion_rec, precision_ratio_rec, completion_ratio_rec, fscore, normal_acc, normal_comp, normal_avg
     output = subprocess.check_output(cmd, shell=True).decode("utf-8")
