@@ -49,7 +49,9 @@ logs/
 *.log
 
 # Data (excluded as requested)
+all_losses/
 data/
+paper/
 
 # Evals (excluded as requested)
 evals/
