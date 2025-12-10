@@ -1,8 +1,8 @@
-desc: "2-GPU optimized config for Replica dataset - matches paper's effective batch size"
+desc: "Run all 8 Replica scans simultaneously - one scan per GPU (8 GPUs)"
 train:
-  exp_name: replica_2gpu
+  exp_name: replica_weight05_lam05
   max_step: 60000
-  batch_size: 2 # image batch per GPU (effective batch = 2 GPUs × 2 = 4, matches paper)
+  batch_size: 4 # image batch per GPU (matches replica.yaml default, gives 2400 epochs with 100 images)
   num_rays: 1024 # ray batch
   custom_sampling: true # enable deflection angle guided sampling
 
@@ -21,13 +21,13 @@ train:
   valid_downscale: 1 # downscale factor for validation per plot_freq
 
 dataset:
-  scan_id: '1' # id=-1 for custom dataset in data_dir
+  scan_id: '1' # This will be overridden by command line for each GPU (scans 1-8)
   data_dir: ./data/Replica
   num_images: 303
 
   use_mono_depth: true  # apply monocular depth prior
   use_mono_normal: true  # apply monocular normal prior
-  use_mask: false # apply mask to filter abnormal priors (set to false if mask_path not in dataset JSON)
+  use_mask: true # apply mask to filter abnormal priors
   use_uncertainty: false
 
   use_pts: false
@@ -194,22 +194,19 @@ loss:
   
   # Uncertainty loss configuration
   use_uncertainty: true  # Enable uncertainty loss
-  use_ssim_uncertainty: false  # Enable SSIM-based uncertainty loss (optional)
-  use_variance_regularizer: false  # Enable DINO patch variance regularization (optional)
-  weight_unc: 1.0  # Weight for uncertainty loss
-  unc_lambda_reg: 0.5  # Regularization weight (reg_mult in NeRF-OTG)
+  use_ssim_uncertainty: true  # Enable SSIM-based uncertainty loss (required per paper for decoupled training)
+  use_variance_regularizer: true  # Enable DINO patch variance regularization (ND-SDF paper Eq. 2 & 3)
+  weight_unc: 0.5  # Weight for uncertainty loss (reduced to match nerf-on-the-go's ssim_mult)
+  unc_lambda_reg: 0.5  # Regularization weight λ1 in paper Eq. 9
   unc_clip_min: 0.1  # Minimum uncertainty value for clipping
   unc_eps: 1e-3  # Epsilon for numerical stability
   
-  # SSIM uncertainty loss parameters (if use_ssim_uncertainty=true)
-  ssim_weight: 0.5  # Weight for SSIM loss term (ssim_mult in NeRF-OTG)
-  ssim_anneal: 0.8  # Annealing parameter for SSIM (ssim_anneal in NeRF-OTG)
-  ssim_clip_max: 5.0  # Maximum value to clip SSIM loss
+  # SSIM uncertainty loss parameters (ND-SDF paper Eq. 8 & 9)
   ssim_window_size: 5  # Window size for SSIM computation
-  stop_ssim_gradient: false  # Stop gradient from SSIM to RGB
+  stop_ssim_gradient: true  # Stop gradient from SSIM to RGB (REQUIRED for decoupled training per paper)
   
-  # Patch variance regularizer parameters (if use_variance_regularizer=true)
-  variance_weight: 0.1  # Weight for variance regularization (dino_var_mult in NeRF-OTG)
+  # Patch variance regularizer parameters (ND-SDF paper Eq. 2 & 3)
+  variance_weight: 0.1  # Weight for variance regularization
   
   # Training progress-based uncertainty annealing
   use_uncertainty_annealing: false  # Enable uncertainty weight annealing
@@ -224,7 +221,7 @@ uncertainty:
 
 optim:
   type: AdamW
-  lr: 1e-3 # same as paper (effective batch matches paper: 2 GPUs × 2 = 4)
+  lr: 1e-3
   lr_scale_grid: 20.0
   lr_scale_density: 1.0
   sched:
@@ -240,4 +237,3 @@ optim:
     re_weight_params: [25, 15, 2]
     if_unbiased: true
     unbiased_params: [25,10]
-
