@@ -67,6 +67,9 @@ for i in range(0, n_imgs, 1):
     if num_views>=0 and not i in fewshot_idx:
         continue
     c2w = poses[i]
+    # Ensure c2w is numpy array
+    if isinstance(c2w, torch.Tensor):
+        c2w = c2w.cpu().numpy()
     points = pc.copy()
     points = torch.from_numpy(points).cuda()
     w2c = np.linalg.inv(c2w)

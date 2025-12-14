@@ -52,9 +52,23 @@ if __name__ == "__main__":
 
     # cumesh
     cull_mesh_out = os.path.join(out_dir, f"cull_{scan}.ply")
-    cmd = f"python {os.path.join(script_dir, 'cull_mesh.py')} --input_mesh {ply_file} --input_scalemat {os.path.join(data_dir, f'scan{idx}', 'cameras.npz')} --traj {os.path.join(data_dir, f'scan{idx}', 'traj.txt')} --output_mesh {cull_mesh_out}"
-    print(cmd)
-    os.system(cmd)
+    cameras_file = os.path.join(data_dir, f'scan{idx}', 'cameras.npz')
+    traj_file = os.path.join(data_dir, f'scan{idx}', 'traj.txt')
+    
+    # Check if required files exist
+    if not os.path.exists(cameras_file):
+        print(f"Warning: cameras.npz not found at {cameras_file}, skipping culling")
+        cull_mesh_out = ply_file  # Use original mesh
+    elif not os.path.exists(traj_file):
+        print(f"Warning: traj.txt not found at {traj_file}, skipping culling")
+        cull_mesh_out = ply_file  # Use original mesh
+    else:
+        cmd = f"python {os.path.join(script_dir, 'cull_mesh.py')} --input_mesh {ply_file} --input_scalemat {cameras_file} --traj {traj_file} --output_mesh {cull_mesh_out}"
+        print(cmd)
+        result = os.system(cmd)
+        if result != 0 or not os.path.exists(cull_mesh_out):
+            print(f"Warning: Culling failed, using original mesh")
+            cull_mesh_out = ply_file
 
     gt_mesh_path = os.path.join(data_dir, 'cull_GTmesh', f"{scan}.ply")
     if not os.path.exists(gt_mesh_path):
