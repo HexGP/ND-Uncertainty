@@ -17,25 +17,49 @@ if __name__ == "__main__":
     parser.add_argument('--output_dir', type=str, default='evaluation_results_single', help='path to the output folder')
     args = parser.parse_args()
 
-    out_dir = args.output_dir
-    data_dir = args.data_dir
+    # Convert relative paths to absolute paths relative to project root
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(script_dir)))  # Go up from evals/replica_eval to ND-Uncertainty
+    
+    # Resolve paths: if relative, make them relative to project root, then convert to absolute
+    if os.path.isabs(args.output_dir):
+        out_dir = args.output_dir
+    elif args.output_dir.startswith('../'):
+        out_dir = os.path.abspath(args.output_dir)
+    else:
+        out_dir = os.path.abspath(os.path.join(project_root, args.output_dir))
+    
+    if os.path.isabs(args.data_dir):
+        data_dir = args.data_dir
+    elif args.data_dir.startswith('../'):
+        data_dir = os.path.abspath(args.data_dir)
+    else:
+        data_dir = os.path.abspath(os.path.join(project_root, args.data_dir))
+    
+    if os.path.isabs(args.input_mesh):
+        ply_file = args.input_mesh
+    elif args.input_mesh.startswith('../'):
+        ply_file = os.path.abspath(args.input_mesh)
+    else:
+        ply_file = os.path.abspath(os.path.join(project_root, args.input_mesh))
+    
     Path(out_dir).mkdir(parents=True, exist_ok=True)
 
     idx = args.scan_id
     scan = scans[int(idx) - 1]
 
-    ply_file = args.input_mesh
-
     result_mesh_file = os.path.join(out_dir, "culled_mesh_.ply")
 
     # cumesh
     cull_mesh_out = os.path.join(out_dir, f"cull_{scan}.ply")
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    cmd = f"python {os.path.join(script_dir, 'cull_mesh.py')} --input_mesh {ply_file} --input_scalemat {data_dir}/scan{idx}/cameras.npz --traj {data_dir}/scan{idx}/traj.txt --output_mesh {cull_mesh_out}"
+    cmd = f"python {os.path.join(script_dir, 'cull_mesh.py')} --input_mesh {ply_file} --input_scalemat {os.path.join(data_dir, f'scan{idx}', 'cameras.npz')} --traj {os.path.join(data_dir, f'scan{idx}', 'traj.txt')} --output_mesh {cull_mesh_out}"
     print(cmd)
     os.system(cmd)
 
     gt_mesh_path = os.path.join(data_dir, 'cull_GTmesh', f"{scan}.ply")
+    if not os.path.exists(gt_mesh_path):
+        print(f"Error: GT mesh not found at {gt_mesh_path}")
+        exit(1)
     gt_mesh = trimesh.load(gt_mesh_path)
     gt_mesh.export(os.path.join(out_dir, f"{scan}_gt.ply"))
     cmd = f"python {os.path.join(script_dir, 'eval_recon.py')} --rec_mesh {cull_mesh_out} --gt_mesh {gt_mesh_path}"
