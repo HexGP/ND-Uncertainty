@@ -43,6 +43,9 @@ ENV/
 
 # Training outputs
 runs/
+runs_new/
+runs_unc_w0_1/
+runs_unc_w0_5/
 runs_test_unc/
 runs_unc_beta/
 logs/

@@ -36,6 +36,9 @@ class UncertaintyPipeline(nn.Module):
         dino_model_name: str = "dinov2_vitb14",
         patch_hidden_dim: int = 64,
         dropout_rate: float = 0.25,
+        init_log_sigma: float = -3.0,  # s_0 = -3 → σ ≈ 0.05
+        sigma_min: float = 1e-3,
+        sigma_max: float = 0.5,
         device: Optional[torch.device] = None,
     ):
         """
@@ -52,6 +55,9 @@ class UncertaintyPipeline(nn.Module):
         self.patch_size = patch_size
         self.dilation = dilation
         self.patch_hidden_dim = patch_hidden_dim
+        self.init_log_sigma = init_log_sigma
+        self.sigma_min = sigma_min
+        self.sigma_max = sigma_max
 
         # Initialize DINO encoder
         self.dino_encoder = DinoV2Encoder(
@@ -87,6 +93,9 @@ class UncertaintyPipeline(nn.Module):
                 in_dim=c_patch,
                 hidden_dim=self.patch_hidden_dim,
                 dropout_rate=self.dropout_rate,
+                init_log_sigma=self.init_log_sigma,
+                sigma_min=self.sigma_min,
+                sigma_max=self.sigma_max,
             ).to(patches.device)
 
             # Register as a submodule so it's included in state_dict

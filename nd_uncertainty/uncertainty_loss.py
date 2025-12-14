@@ -1,14 +1,13 @@
 """
-Uncertainty Loss Implementation (Nerf-on-the-go Paper Approach)
+Uncertainty Loss Implementation
 
-Implements decoupled SSIM-based uncertainty loss from Nerf-on-the-go paper:
-- Eq. 8: LSSIM = (1-L)·(1-C)·(1-S)
-- Eq. 9: Luncer(r) = LSSIM / (2β(r)²) + λ1 log β(r)
+Implements heteroscedastic uncertainty for color loss per ND-SDF principles:
+- Heteroscedastic color loss: L_color(r) = (1/(2σ²)) * ||C - Ĉ||² + (1/2) * log(σ²)
+- Uncertainty regularizer: R(σ) = (1/N) * Σ_r (log σ_c(r) - log σ_0)²
 
-Key principle: Uncertainty MLP training is DECOUPLED from ND-SDF training.
-- Uncertainty loss trains ONLY the uncertainty MLP
-- ND-SDF trains with standard RGB loss (separate)
-- Gradients are stopped to prevent coupling
+Key principle: Uncertainty ONLY for color/photometric loss, NOT for SDF/eikonal/normal.
+- SDF, eikonal, normal losses remain deterministic (no uncertainty)
+- Only color loss uses heteroscedastic uncertainty weighting
 """
 
 import torch
@@ -165,3 +164,102 @@ class UncertaintyColorLoss(nn.Module):
             # l_ssim_mean already computed above
         
         return loss, l_ssim_mean
+
+
+def heteroscedastic_color_loss(rgb_pred, rgb_gt, sigma, mask=None):
+    """
+    Heteroscedastic uncertainty-weighted color loss per ND-SDF principles.
+    
+    Formula: L_color(r) = (1 / (2 * σ_c(r)^2)) * ||C(r) - Ĉ(r)||^2 + (1/2) * log(σ_c(r)^2)
+    
+    This replaces the standard RGB L1 loss when uncertainty is enabled.
+    Uncertainty σ should be proportional to color prediction errors.
+    
+    Args:
+        rgb_pred: (B, R, 3) predicted RGB from ND-SDF
+        rgb_gt:   (B, R, 3) ground truth RGB
+        sigma:    (B, R, 1) predicted uncertainty σ(r) (from uncertainty MLP)
+        mask:     (B, R, 1) optional mask to apply
+    
+    Returns:
+        loss: scalar heteroscedastic color loss
+    """
+    # Ensure sigma is positive and has minimum value for numerical stability
+    sigma = sigma.clamp(min=1e-6)
+    
+    # Compute squared error: ||C(r) - Ĉ(r)||^2
+    # Sum over RGB channels: (B, R, 3) -> (B, R, 1)
+    residual_sq = (rgb_pred - rgb_gt).pow(2).sum(dim=-1, keepdim=True)  # (B, R, 1)
+    
+    # First term: (1 / (2 * σ²)) * ||C - Ĉ||²
+    # This down-weights errors when uncertainty is high
+    weighted_term = 0.5 * residual_sq / (sigma ** 2)  # (B, R, 1)
+    
+    # Second term: (1/2) * log(σ²) = log(σ)
+    # This prevents σ from collapsing to zero (regularization)
+    log_term = 0.5 * torch.log(sigma ** 2)  # (B, R, 1)
+    
+    # Per-ray loss: L_color(r) = weighted_term + log_term
+    loss_per_ray = weighted_term + log_term  # (B, R, 1)
+    
+    # Apply mask if provided
+    if mask is not None:
+        # mask: (B, R, 1) or (B, R)
+        if mask.dim() == 2:
+            mask = mask.unsqueeze(-1)  # (B, R) -> (B, R, 1)
+        loss_per_ray = loss_per_ray * mask.float()
+        # Average over masked rays
+        if mask.float().sum() > 0:
+            loss = loss_per_ray.sum() / mask.float().sum()
+        else:
+            loss = torch.tensor(0.0, device=loss_per_ray.device)
+    else:
+        # Average over all rays
+        loss = loss_per_ray.mean()
+    
+    return loss
+
+
+def uncertainty_regularizer(sigma, sigma_0=0.1, mask=None):
+    """
+    Regularizer on uncertainty σ to avoid trivial inflation.
+    
+    Formula: R(σ) = (1/N) * Σ_r (log σ_c(r) - log σ_0)^2
+    
+    This encourages σ to stay close to baseline σ_0 in log-space.
+    
+    Args:
+        sigma:    (B, R, 1) predicted uncertainty σ(r)
+        sigma_0:  float, baseline uncertainty (default 0.1)
+        mask:     (B, R, 1) optional mask to apply
+    
+    Returns:
+        loss: scalar regularizer loss
+    """
+    # Ensure sigma is positive
+    sigma = sigma.clamp(min=1e-6)
+    
+    # Compute log differences: (log σ - log σ_0) = log(σ / σ_0)
+    log_sigma = torch.log(sigma)  # (B, R, 1)
+    log_sigma_0 = torch.log(torch.tensor(sigma_0, device=sigma.device, dtype=sigma.dtype))
+    log_diff = log_sigma - log_sigma_0  # (B, R, 1)
+    
+    # Square the log differences: (log σ - log σ_0)^2
+    reg_per_ray = log_diff ** 2  # (B, R, 1)
+    
+    # Apply mask if provided
+    if mask is not None:
+        # mask: (B, R, 1) or (B, R)
+        if mask.dim() == 2:
+            mask = mask.unsqueeze(-1)  # (B, R) -> (B, R, 1)
+        reg_per_ray = reg_per_ray * mask.float()
+        # Average over masked rays: (1/N) * Σ_r
+        if mask.float().sum() > 0:
+            loss = reg_per_ray.sum() / mask.float().sum()
+        else:
+            loss = torch.tensor(0.0, device=reg_per_ray.device)
+    else:
+        # Average over all rays: (1/N) * Σ_r
+        loss = reg_per_ray.mean()
+    
+    return loss

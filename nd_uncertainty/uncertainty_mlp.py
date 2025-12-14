@@ -1,8 +1,8 @@
 """
 Uncertainty MLP
 
-Small MLP that maps DINO patch embeddings to per-ray uncertainty β(r).
-Mirrors NeRF-on-the-Go's UncerMLP architecture.
+Small MLP that maps DINO patch embeddings to per-ray log-variance s(r) = log σ(r).
+Per ND-SDF principles: predict log-variance for numerical stability.
 """
 
 import torch
@@ -12,19 +12,19 @@ import torch.nn.functional as F
 
 class UncertaintyMLP(nn.Module):
     """
-    MLP G(r) that maps DINO patch embeddings to per-ray uncertainty β(r).
+    MLP G(r) that maps DINO patch embeddings to per-ray log-variance s(r) = log σ(r).
 
-    Mirror NeRF-on-the-Go:
+    Per ND-SDF implementation notes:
+      - Predict log-variance s(r) = log σ_c(r) for numerical stability
+      - Variance is computed as σ_c^2 = exp(2s)
+      - σ is clamped to [σ_min, σ_max] to prevent extreme down-weighting
+      - Initialize log σ to s_0 = -3 (σ ≈ 0.05) to prevent underfitting
+
+    Architecture:
       - Input dim = patch embedding dim (C * patch_size^2)
       - 1 hidden layer with ReLU activation
       - Dropout for regularization
-      - Output dim = 1 (scalar β per ray)
-      - Ensure β(r) > 0 (softplus + epsilon)
-
-    NeRF-on-the-Go uses:
-      - hidden_dim = 62
-      - dropout_rate = 0.25
-      - softplus activation on output
+      - Output dim = 1 (scalar s = log σ per ray)
     """
 
     def __init__(
@@ -32,46 +32,50 @@ class UncertaintyMLP(nn.Module):
         in_dim: int,
         hidden_dim: int = 64,
         dropout_rate: float = 0.25,
+        init_log_sigma: float = -3.0,  # s_0 = -3 → σ ≈ 0.05
+        sigma_min: float = 1e-3,
+        sigma_max: float = 0.5,
     ):
         """
         Args:
             in_dim: Input dimension (patch embedding size = C * patch_size^2).
-            hidden_dim: Hidden layer dimension. NeRF-on-the-Go uses 62, but
-                       we default to 64 for flexibility.
+            hidden_dim: Hidden layer dimension (default 64).
             dropout_rate: Dropout rate for regularization (default 0.25).
+            init_log_sigma: Initial value for log σ (s_0, default -3.0 → σ ≈ 0.05).
+            sigma_min: Minimum σ value for clamping (default 1e-3).
+            sigma_max: Maximum σ value for clamping (default 0.5).
         """
         super().__init__()
 
         self.in_dim = in_dim
         self.hidden_dim = hidden_dim
         self.dropout_rate = dropout_rate
+        self.init_log_sigma = init_log_sigma
+        self.sigma_min = sigma_min
+        self.sigma_max = sigma_max
 
         # Single hidden layer MLP
         self.fc1 = nn.Linear(in_dim, hidden_dim)
         self.dropout = nn.Dropout(dropout_rate)
         self.fc2 = nn.Linear(hidden_dim, 1)
 
-        # Initialize weights (He uniform, similar to NeRF-on-the-Go)
+        # Initialize weights (He uniform)
         nn.init.kaiming_uniform_(self.fc1.weight, nonlinearity='relu')
         nn.init.kaiming_uniform_(self.fc2.weight, nonlinearity='relu')
         nn.init.zeros_(self.fc1.bias)
-        # Initialize output bias
-        # NOTE: NeRF-on-the-Go uses default zero bias (Flax nn.Dense default).
-        # However, with zero bias, if hidden layer outputs are small/zero (common with ReLU),
-        # the final output can be very negative, making softplus ≈ 0 and beta ≈ 1e-6.
-        # 
-        # Options:
-        # 1. bias=0 (matches NeRF-on-the-Go exactly, but may cause collapse)
-        # 2. bias=1.5 (practical fix to ensure visible initial beta values)
-        # 
-        # Using bias=1.5 ensures softplus(1.5) ≈ 1.7, which is in visible range [0.2, 2.0].
-        # This is NOT from the paper/repo, but a practical fix for the all-purple issue.
-        # If you want to match NeRF-on-the-Go exactly, change this to: nn.init.zeros_(self.fc2.bias)
-        nn.init.constant_(self.fc2.bias, 1.5)  # softplus(1.5) ≈ 1.7, visible as yellow/red
+        
+        # Initialize output bias to s_0 = -3 (log σ ≈ -3 → σ ≈ 0.05)
+        # This prevents underfitting from large initial σ values
+        nn.init.constant_(self.fc2.bias, init_log_sigma)
 
     def forward(self, patches: torch.Tensor, is_training: bool = None) -> torch.Tensor:
         """
-        Forward pass: patches → β(r).
+        Forward pass: patches → s(r) = log σ(r) → σ(r).
+
+        Per ND-SDF implementation:
+          - Predict log-variance s(r) = log σ_c(r)
+          - Compute σ = exp(s), then clamp to [σ_min, σ_max]
+          - This ensures numerical stability and prevents extreme down-weighting
 
         Args:
             patches: (B, R, C_patch) DINO patch embeddings.
@@ -79,7 +83,7 @@ class UncertaintyMLP(nn.Module):
                         If None, uses self.training.
 
         Returns:
-            beta: (B, R, 1) positive uncertainty values β(r).
+            sigma: (B, R, 1) clamped uncertainty values σ(r) ∈ [σ_min, σ_max].
         """
         if is_training is None:
             is_training = self.training
@@ -89,21 +93,24 @@ class UncertaintyMLP(nn.Module):
         x = F.relu(x)
         x = self.dropout(x) if is_training else x
 
-        # Output layer
-        x = self.fc2(x)  # (B, R, 1)
+        # Output layer: predicts log-variance s(r) = log σ(r)
+        log_sigma = self.fc2(x)  # (B, R, 1)
 
-        # Apply softplus to ensure positive output
-        # Note: We add a small epsilon AFTER softplus to ensure numerical stability,
-        # but softplus already ensures positive values, so this is mainly for safety.
-        beta = F.softplus(x) + 1e-6
+        # Compute σ = exp(s) for numerical stability
+        sigma = torch.exp(log_sigma)  # (B, R, 1)
+
+        # Clamp σ to [σ_min, σ_max] to prevent extreme down-weighting
+        # This prevents the loss from being down-weighted too much when σ is very large
+        sigma = sigma.clamp(min=self.sigma_min, max=self.sigma_max)  # (B, R, 1)
         
-        # Debug: Print beta statistics on first forward pass (only once)
+        # Debug: Print statistics on first forward pass (only once)
         if not hasattr(self, '_debug_printed'):
             with torch.no_grad():
                 print(f"[UncertaintyMLP Debug] First forward pass:")
-                print(f"  - fc2 output (before softplus): min={x.min().item():.4f}, max={x.max().item():.4f}, mean={x.mean().item():.4f}")
-                print(f"  - beta (after softplus): min={beta.min().item():.4f}, max={beta.max().item():.4f}, mean={beta.mean().item():.4f}")
-                print(f"  - fc2.bias value: {self.fc2.bias.item():.4f}")
+                print(f"  - log_sigma (s): min={log_sigma.min().item():.4f}, max={log_sigma.max().item():.4f}, mean={log_sigma.mean().item():.4f}")
+                print(f"  - sigma (before clamp): min={torch.exp(log_sigma).min().item():.4f}, max={torch.exp(log_sigma).max().item():.4f}")
+                print(f"  - sigma (after clamp): min={sigma.min().item():.4f}, max={sigma.max().item():.4f}, mean={sigma.mean().item():.4f}")
+                print(f"  - fc2.bias (s_0): {self.fc2.bias.item():.4f}")
             self._debug_printed = True
 
-        return beta
+        return sigma

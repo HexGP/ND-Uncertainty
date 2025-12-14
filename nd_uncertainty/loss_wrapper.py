@@ -10,7 +10,11 @@ import torch.nn as nn
 from omegaconf import OmegaConf
 
 from models.loss import ImplicitReconLoss
-from nd_uncertainty.uncertainty_loss import UncertaintyColorLoss
+from nd_uncertainty.uncertainty_loss import (
+    UncertaintyColorLoss,  # Legacy SSIM-based (kept for backward compatibility)
+    heteroscedastic_color_loss,  # New heteroscedastic color loss
+    uncertainty_regularizer,  # New uncertainty regularizer
+)
 from nd_uncertainty.variance_regularizer import PatchVarianceRegularizer
 from nd_uncertainty.ssim_utils import bias_function
 
@@ -38,7 +42,9 @@ class UncertaintyAwareLoss(nn.Module):
             'use_uncertainty', 'use_ssim_uncertainty', 'use_variance_regularizer',
             'weight_unc', 'unc_lambda_reg', 'unc_clip_min', 'unc_eps',
             'ssim_window_size', 'stop_ssim_gradient', 'ssim_anneal', 'ssim_clip_max',
-            'variance_weight', 'use_uncertainty_annealing', 'uncertainty_anneal_param', 'weight_unc_sched'
+            'variance_weight', 'use_uncertainty_annealing', 'uncertainty_anneal_param', 'weight_unc_sched',
+            # New heteroscedastic uncertainty parameters
+            'init_log_sigma', 'sigma_min', 'sigma_max', 'uncertainty_warmup_steps', 'uncertainty_lr_scale'
         ]
         for param in uncertainty_params:
             loss_conf.pop(param, None)  # Remove if exists, ignore if doesn't
@@ -56,26 +62,43 @@ class UncertaintyAwareLoss(nn.Module):
             self.use_uncertainty_annealing = False
             return
         
-        # Initialize uncertainty loss (ND-SDF paper approach)
-        # Get config values with defaults matching ND-SDF paper
-        lambda_reg = getattr(conf.loss, 'unc_lambda_reg', 0.5)  # λ1 in paper Eq. 9
-        uncer_clip_min = getattr(conf.loss, 'unc_clip_min', 0.1)
-        use_ssim = getattr(conf.loss, 'use_ssim_uncertainty', True)  # Default True per paper
-        ssim_window_size = getattr(conf.loss, 'ssim_window_size', 5)
-        stop_ssim_gradient = getattr(conf.loss, 'stop_ssim_gradient', True)  # Default True for decoupling
-        ssim_anneal = getattr(conf.loss, 'ssim_anneal', 0.8)  # SSIM rate annealing (matches NeRF-on-the-Go)
-        ssim_clip_max = getattr(conf.loss, 'ssim_clip_max', 5.0)  # SSIM loss clipping (matches NeRF-on-the-Go)
+        # Initialize uncertainty components for heteroscedastic formulation
+        # Get config values with defaults per ND-SDF hyperparameters
+        # β = 0.01 (regularization weight, default per ND-SDF)
+        self.unc_lambda_reg = getattr(conf.loss, 'unc_lambda_reg', 0.01)
         
-        self.unc_loss = UncertaintyColorLoss(
-            lambda_reg=lambda_reg,
-            uncer_clip_min=uncer_clip_min,
-            eps=getattr(conf.loss, 'unc_eps', 1e-3),
-            use_ssim=use_ssim,
-            ssim_window_size=ssim_window_size,
-            stop_ssim_gradient=stop_ssim_gradient,
-            ssim_anneal=ssim_anneal,
-            ssim_clip_max=ssim_clip_max,
-        )
+        # s_0 = -3 → σ_0 ≈ 0.05 (initial log σ, default per ND-SDF)
+        init_log_sigma = getattr(conf.loss, 'init_log_sigma', -3.0)
+        self.sigma_0 = torch.exp(torch.tensor(init_log_sigma)).item()  # σ_0 = exp(s_0) ≈ 0.05
+        
+        # Clamping parameters: σ ∈ [1e-3, 0.5] (default per ND-SDF)
+        self.sigma_min = getattr(conf.loss, 'sigma_min', 1e-3)
+        self.sigma_max = getattr(conf.loss, 'sigma_max', 0.5)
+        
+        # Legacy SSIM-based uncertainty loss (kept for backward compatibility)
+        # The new heteroscedastic formulation is the default
+        use_ssim = getattr(conf.loss, 'use_ssim_uncertainty', False)  # Default False - use heteroscedastic instead
+        if use_ssim:
+            # Only initialize if explicitly enabled (legacy mode)
+            # For legacy mode, use old unc_clip_min parameter if available, otherwise use sigma_min
+            uncer_clip_min = getattr(conf.loss, 'unc_clip_min', self.sigma_min)
+            ssim_window_size = getattr(conf.loss, 'ssim_window_size', 5)
+            stop_ssim_gradient = getattr(conf.loss, 'stop_ssim_gradient', True)
+            ssim_anneal = getattr(conf.loss, 'ssim_anneal', 0.8)
+            ssim_clip_max = getattr(conf.loss, 'ssim_clip_max', 5.0)
+            self.unc_loss = UncertaintyColorLoss(
+                lambda_reg=self.unc_lambda_reg,
+                uncer_clip_min=uncer_clip_min,
+                eps=getattr(conf.loss, 'unc_eps', 1e-3),
+                use_ssim=use_ssim,
+                ssim_window_size=ssim_window_size,
+                stop_ssim_gradient=stop_ssim_gradient,
+                ssim_anneal=ssim_anneal,
+                ssim_clip_max=ssim_clip_max,
+            )
+        else:
+            # New heteroscedastic formulation (default)
+            self.unc_loss = None  # Not used in heteroscedastic mode
         
         # Initialize patch variance regularizer (ND-SDF paper Eq. 2 & 3)
         # This regularizer is fine to use - it doesn't break decoupling because:
@@ -93,10 +116,21 @@ class UncertaintyAwareLoss(nn.Module):
         else:
             self.variance_reg = None
         
-        # Weight for uncertainty loss (can be scheduled with training progress)
+        # Weight for heteroscedastic color loss (λ_color in formula)
+        # This replaces lambda_rgb_l1 when uncertainty is enabled
+        # Default: λ_color = 1.0 (per ND-SDF hyperparameters)
         self.weight_unc = getattr(conf.loss, 'weight_unc', 1.0)
+        
+        # Store sigma clamping parameters for potential use
+        self.sigma_min = getattr(conf.loss, 'sigma_min', 1e-3)
+        self.sigma_max = getattr(conf.loss, 'sigma_max', 0.5)
         self.use_uncertainty_annealing = getattr(conf.loss, 'use_uncertainty_annealing', False)
         self.uncertainty_anneal_param = getattr(conf.loss, 'uncertainty_anneal_param', 0.8)
+        
+        # Curriculum learning: warmup stage (train without uncertainty for first N_warm steps)
+        # This helps SDF, eikonal, and deflection field find good geometry before σ can "hide" errors
+        # Default: N_warm = 5000 steps (per ND-SDF training schedule)
+        self.warmup_steps = getattr(conf.loss, 'uncertainty_warmup_steps', 5000)
         
         # Optional: sequential learning rate for uncertainty loss
         if hasattr(conf.loss, 'weight_unc_sched'):
@@ -148,9 +182,17 @@ class UncertaintyAwareLoss(nn.Module):
         # 3. If neither the wrapper nor base_loss have it, raise a normal error.
         raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
     
-    def forward(self, output, sample, prog):
+    def forward(self, output, sample, prog, cur_step=None):
         """
-        Compute combined ND-SDF + uncertainty loss.
+        Compute combined ND-SDF + heteroscedastic uncertainty loss.
+        
+        Per ND-SDF principles:
+        - Heteroscedastic uncertainty ONLY for color loss
+        - SDF, eikonal, normal losses remain deterministic (no uncertainty)
+        - Total: L = λ_sdf*L_SDF + λ_eik*L_eik + λ_normal*L_normal + λ_color*Σ_r L_color(r) + β*R(σ)
+        
+        Curriculum learning: If warmup_steps > 0, uncertainty is disabled for first N_warm steps.
+        This helps geometry find good initialization before σ can "hide" errors.
         
         Args:
             output: dict from ND-SDF forward pass
@@ -158,26 +200,30 @@ class UncertaintyAwareLoss(nn.Module):
                 - 'outside': (B, R, 1) outside mask
             sample: dict containing:
                 - 'rgb': (B, R, 3) ground truth RGB
-                - 'beta': (B, R, 1) predicted uncertainty β(r)
+                - 'beta': (B, R, 1) predicted uncertainty σ(r) (note: beta = sigma)
                 - 'mask': (B, R, 1) optional foreground mask
             prog: training progress [0, 1]
+            cur_step: current training step (for warmup check, optional)
         
         Returns:
-            losses: dict with all ND-SDF losses + uncertainty_loss + updated total
+            losses: dict with all ND-SDF losses + heteroscedastic color loss + regularizer + updated total
         """
-        # Run all ND-SDF native losses (eikonal, RGB, depth, normal, etc.)
-        losses = self.base_loss(output, sample, prog)
-        
         # Check if uncertainty is enabled
-        if self.unc_loss is None or 'beta' not in sample:
-            # Uncertainty disabled - return base losses only
+        if 'beta' not in sample:
+            # Uncertainty disabled - use standard ND-SDF losses
+            losses = self.base_loss(output, sample, prog)
             return losses
         
-        # --- Uncertainty loss ---
+        # Curriculum learning: warmup stage
+        # If we're in warmup period, disable uncertainty and use standard RGB loss
+        if self.warmup_steps > 0 and cur_step is not None and cur_step < self.warmup_steps:
+            losses = self.base_loss(output, sample, prog)
+            return losses
+        
         # Extract required tensors
         rgb_pred = output['rgb']          # (B, R, 3)
-        rgb_gt = sample['rgb']             # (B, R, 3)
-        beta = sample['beta']              # (B, R, 1)
+        rgb_gt = sample['rgb']            # (B, R, 3)
+        sigma = sample['beta']             # (B, R, 1) - uncertainty σ (beta in code, sigma in formula)
         
         # Get mask (foreground + not outside)
         outside = output.get('outside', None)  # (B, R, 1)
@@ -193,53 +239,54 @@ class UncertaintyAwareLoss(nn.Module):
         else:
             mask = None
         
-        # Compute SSIM-based uncertainty loss (ND-SDF paper Eq. 9)
-        # This loss trains ONLY the uncertainty MLP, not the NeRF model
-        # Gradients are stopped from flowing back to RGB predictions (decoupling)
-        # Pass train_frac (prog) for SSIM rate scaling (100-1000x multiplier)
-        L_unc, L_ssim_mean = self.unc_loss(rgb_pred, rgb_gt, beta, mask=mask, train_frac=prog)
-        
-        # Compute patch variance regularization (ND-SDF paper Eq. 2 & 3)
-        # This regularizer encourages spatial-temporal consistency in uncertainty predictions
-        # IMPORTANT: L_reg is added to L_unc (not to total loss separately)
-        # This ensures it only influences Uncertainty MLP branch, not ND-SDF training
-        L_var = None
-        if self.variance_reg is not None and 'uncertainty_features' in sample:
-            patch_features = sample['uncertainty_features']  # (B, R, C_patch)
-            L_var = self.variance_reg(patch_features, beta)
-            losses['variance_regularizer'] = L_var
-            # Add L_reg to uncertainty loss (not to total loss separately)
-            # This way L_reg only affects Uncertainty MLP, not ND-SDF
-            L_unc = L_unc + L_var
-        
-        # Get uncertainty loss weight (may be scheduled)
-        weight_unc = self.weight_unc_fn(prog)
-        
-        # Apply training progress-based uncertainty annealing (optional)
-        if self.use_uncertainty_annealing:
-            # Adjust uncertainty weight based on training progress
-            uncer_rate = 1.0 + bias_function(prog, self.uncertainty_anneal_param)
-            weight_unc = weight_unc * uncer_rate
-        
-        # ND-SDF Paper Approach: DECOUPLED Training
+        # --- ND-SDF Principle: Uncertainty ONLY for color, NOT for SDF/eikonal/normal ---
         # 
-        # Key principle: Uncertainty MLP training is SEPARATE from NeRF training
-        # - ND-SDF trains with standard RGB loss (kept above, not replaced)
-        # - Uncertainty MLP trains with SSIM-based uncertainty loss + L_reg (added here)
-        # - Gradients are stopped to prevent coupling (handled in UncertaintyColorLoss)
-        #
-        # This ensures:
-        # 1. Uncertainty prediction doesn't influence NeRF color rendering
-        # 2. NeRF color errors don't directly affect uncertainty MLP training
-        # 3. Uncertainty learns to detect structural differences (distractors) via SSIM
-        # 4. L_reg only affects Uncertainty MLP (beta comes from MLP, DINO is frozen)
+        # Step 1: Compute all deterministic losses (SDF, eikonal, normal, etc.)
+        # These remain unchanged - no uncertainty weighting
+        losses = self.base_loss(output, sample, prog)
         
-        # Add uncertainty loss (which now includes L_reg) to total
-        # This only affects uncertainty MLP gradients (RGB is detached in UncertaintyColorLoss)
-        losses['uncertainty_loss'] = L_unc
-        losses['l_ssim'] = L_ssim_mean  # LSSIM value for logging (Eq. 8)
-        # Add uncertainty loss to existing ND-SDF total (not replacing, just adding)
-        base_total = losses['total']  # This is the sum of all ND-SDF losses (rgb_l1, rgb_mse, eik, smooth, curvature, etc.)
-        losses['total'] = base_total + weight_unc * L_unc
+        # Step 2: Replace standard RGB L1 loss with heteroscedastic color loss
+        # Get the original RGB L1 loss weight
+        lambda_rgb_l1 = self.base_loss.lambda_rgb_l1(prog)
+        
+        # Compute heteroscedastic color loss: L_color(r) = (1/(2σ²)) * ||C - Ĉ||² + (1/2) * log(σ²)
+        L_color = heteroscedastic_color_loss(rgb_pred, rgb_gt, sigma, mask=mask)
+        
+        # Replace rgb_l1 in total loss
+        # Remove the original rgb_l1 contribution from total
+        if 'rgb_l1' in losses and lambda_rgb_l1 > 0:
+            base_total = losses['total']
+            # Subtract original rgb_l1 contribution
+            base_total = base_total - lambda_rgb_l1 * losses['rgb_l1']
+            # Add heteroscedastic color loss with same weight (λ_color = weight_unc)
+            weight_unc = self.weight_unc_fn(prog)
+            if self.use_uncertainty_annealing:
+                uncer_rate = 1.0 + bias_function(prog, self.uncertainty_anneal_param)
+                weight_unc = weight_unc * uncer_rate
+            
+            # Replace rgb_l1 with heteroscedastic color loss
+            losses['rgb_l1'] = L_color  # Store heteroscedastic loss as rgb_l1 for logging
+            losses['heteroscedastic_color_loss'] = L_color  # Also store with explicit name
+            base_total = base_total + weight_unc * L_color
+        else:
+            # If rgb_l1 was not used, just add heteroscedastic loss
+            weight_unc = self.weight_unc_fn(prog)
+            if self.use_uncertainty_annealing:
+                uncer_rate = 1.0 + bias_function(prog, self.uncertainty_anneal_param)
+                weight_unc = weight_unc * uncer_rate
+            losses['heteroscedastic_color_loss'] = L_color
+            base_total = losses['total'] + weight_unc * L_color
+        
+        # Step 3: Add uncertainty regularizer: R(σ) = (1/N) * Σ_r (log σ - log σ_0)²
+        # Regularizer weight: β = unc_lambda_reg
+        L_reg = uncertainty_regularizer(sigma, sigma_0=self.sigma_0, mask=mask)
+        losses['uncertainty_regularizer'] = L_reg
+        base_total = base_total + self.unc_lambda_reg * L_reg
+        
+        # Step 4: Update total loss
+        losses['total'] = base_total
+        
+        # For backward compatibility, also store as uncertainty_loss
+        losses['uncertainty_loss'] = L_color  # Heteroscedastic color loss
         
         return losses

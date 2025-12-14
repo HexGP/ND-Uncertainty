@@ -35,10 +35,19 @@ class UncertaintyTrainer(NDSDFTrainer):
                 patch_size = 7
                 dilation = 2
             
-            # Create uncertainty pipeline (DINO → patches → β(r))
+            # Get uncertainty MLP initialization parameters from config
+            # Defaults per ND-SDF: s_0 = -3, σ ∈ [1e-3, 0.5]
+            init_log_sigma = getattr(self.conf.loss, 'init_log_sigma', -3.0)
+            sigma_min = getattr(self.conf.loss, 'sigma_min', 1e-3)
+            sigma_max = getattr(self.conf.loss, 'sigma_max', 0.5)
+            
+            # Create uncertainty pipeline (DINO → patches → σ(r))
             self.uncertainty_pipeline = UncertaintyPipeline(
                 patch_size=patch_size,
                 dilation=dilation,
+                init_log_sigma=init_log_sigma,
+                sigma_min=sigma_min,
+                sigma_max=sigma_max,
                 device=torch.device(f'cuda:{gpu}')
             )
             # DINO encoder is frozen by default in UncertaintyPipeline
@@ -185,13 +194,16 @@ class UncertaintyTrainer(NDSDFTrainer):
                 self.uncertainty_pipeline.uncertainty_mlp is not None and
                 not any('uncertainty_mlp' in pg.get('name', '') for pg in self.optimizer.param_groups)):
                 # Add uncertainty MLP parameters to optimizer
+                # Per ND-SDF: reduce σ learning rate (0.1x color LR) to avoid quick inflation
+                uncertainty_lr_scale = getattr(self.conf.loss, 'uncertainty_lr_scale', 0.1)  # Default 0.1x
+                uncertainty_lr = self.conf.optim.lr * uncertainty_lr_scale
                 self.optimizer.add_param_group({
                     'name': 'uncertainty_mlp',
                     'params': self.uncertainty_pipeline.uncertainty_mlp.parameters(),
-                    'lr': self.conf.optim.lr,
+                    'lr': uncertainty_lr,
                 })
                 if self.gpu == 0:
-                    print("Added uncertainty MLP to optimizer")
+                    print(f"Added uncertainty MLP to optimizer with LR={uncertainty_lr:.2e} (scale={uncertainty_lr_scale}x)")
         else:
             # Uncertainty disabled - set dummy values
             B, R = sample['sampling_idx'].shape

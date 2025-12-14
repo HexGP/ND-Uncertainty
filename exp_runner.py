@@ -147,7 +147,9 @@ class Trainer():
             'use_uncertainty', 'use_ssim_uncertainty', 'use_variance_regularizer',
             'weight_unc', 'unc_lambda_reg', 'unc_clip_min', 'unc_eps',
             'ssim_weight', 'ssim_anneal', 'ssim_clip_max', 'ssim_window_size', 'stop_ssim_gradient',
-            'variance_weight', 'use_uncertainty_annealing', 'uncertainty_anneal_param', 'weight_unc_sched'
+            'variance_weight', 'use_uncertainty_annealing', 'uncertainty_anneal_param', 'weight_unc_sched',
+            # New heteroscedastic uncertainty parameters
+            'init_log_sigma', 'sigma_min', 'sigma_max', 'uncertainty_warmup_steps', 'uncertainty_lr_scale'
         ]
         for param in uncertainty_params:
             loss_conf.pop(param, None)  # Remove if exists, ignore if doesn't
@@ -430,7 +432,8 @@ class Trainer():
 
                 # loss
                 # start.record()
-                losses = self.loss(output, sample, progress)
+                # Pass cur_step for curriculum learning (warmup stage)
+                losses = self.loss(output, sample, progress, cur_step=self.cur_step)
                 loss = losses['total']
                 # end.record()
                 # torch.cuda.synchronize()
