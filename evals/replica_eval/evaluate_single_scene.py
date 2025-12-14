@@ -50,6 +50,26 @@ if __name__ == "__main__":
 
     result_mesh_file = os.path.join(out_dir, "culled_mesh_.ply")
 
+    # Fix Scene objects before processing
+    import trimesh
+    temp_mesh = trimesh.load(ply_file, process=False)
+    if isinstance(temp_mesh, trimesh.Scene):
+        print(f"Converting Scene to single mesh...")
+        meshes_to_combine = []
+        for key in temp_mesh.geometry.keys():
+            geom = temp_mesh.geometry[key]
+            if isinstance(geom, trimesh.Trimesh):
+                meshes_to_combine.append(geom)
+        if meshes_to_combine:
+            fixed_mesh = trimesh.util.concatenate(meshes_to_combine)
+            fixed_mesh_file = os.path.join(out_dir, f"{scan}_fixed.ply")
+            fixed_mesh.export(fixed_mesh_file)
+            ply_file = fixed_mesh_file
+            print(f"Fixed mesh saved to: {fixed_mesh_file}")
+        else:
+            print("Error: Scene has no valid meshes")
+            exit(1)
+    
     # cumesh
     cull_mesh_out = os.path.join(out_dir, f"cull_{scan}.ply")
     cameras_file = os.path.join(data_dir, f'scan{idx}', 'cameras.npz')
@@ -161,50 +181,6 @@ if __name__ == "__main__":
                 f.write(f"{'Average':<12} {avg_normal:<15.2f} {avg_chamfer:<15.2f} {avg_fscore:<15.2f}\n")
             
             f.write("="*80 + "\n")
-        
-        print(f"\nResults saved to {results_file}")
-        print(f"  Normal C.: {normal_avg:.2f}, Chamfer: {chamfer:.2f}, F-score: {fscore:.2f}")
-    else:
-        print("Warning: Could not parse evaluation output")
-    
-    # Parse the output to extract metrics
-    # Format: Acc,Comp,Chamfer,Prec,Recal,F-score,Normal,Acc,Normal,Comp,Normal,Avg
-    lines = output.strip().split('\n')
-    values_line = None
-    for line in lines:
-        if line.strip() and not line.startswith('Acc'):
-            # Try to parse as numbers
-            try:
-                values = [float(x) for x in line.split(',')]
-                if len(values) >= 9:
-                    values_line = values
-                    break
-            except ValueError:
-                continue
-    
-    if values_line:
-        # Extract: Acc, Comp, Chamfer, Prec, Recal, F-score, Normal Acc, Normal Comp, Normal Avg
-        chamfer = values_line[2]
-        fscore = values_line[5]
-        normal_avg = values_line[8]
-        
-        # Save to results file
-        results_file = os.path.join(out_dir, 'evaluation_results.txt')
-        file_exists = os.path.exists(results_file)
-        
-        with open(results_file, 'a') as f:
-            if not file_exists:
-                # Write header if file is new
-                f.write("="*80 + "\n")
-                f.write("EVALUATION RESULTS\n")
-                f.write("="*80 + "\n")
-                f.write(f"\n{'Scan':<12} {'ND-Uncertainty':<20}\n")
-                f.write(f"{'':12} {'Normal C. ↑':<15} {'Chamfer ↓':<15} {'F-score ↑':<15}\n")
-                f.write("-" * 80 + "\n")
-            
-            # Write result for this scan
-            f.write(f"{scan:<12} {normal_avg:<15.2f} {chamfer:<15.2f} {fscore:<15.2f}\n")
-            f.flush()
         
         print(f"\nResults saved to {results_file}")
         print(f"  Normal C.: {normal_avg:.2f}, Chamfer: {chamfer:.2f}, F-score: {fscore:.2f}")

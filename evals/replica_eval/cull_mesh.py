@@ -53,6 +53,19 @@ poses = load_poses(args.traj)
 n_imgs = len(poses)
 mesh = trimesh.load(args.input_mesh, process=False)
 
+# Handle Scene objects (multiple meshes) - convert to single mesh
+if isinstance(mesh, trimesh.Scene):
+    meshes_to_combine = []
+    for key in mesh.geometry.keys():
+        geom = mesh.geometry[key]
+        if isinstance(geom, trimesh.Trimesh):
+            meshes_to_combine.append(geom)
+    if meshes_to_combine:
+        mesh = trimesh.util.concatenate(meshes_to_combine)
+    else:
+        print("Error: Scene has no valid meshes")
+        exit(1)
+
 # transform to original coordinate system with scale mat
 scalemat = np.load(args.input_scalemat)['scale_mat_0']
 mesh.vertices = mesh.vertices @ scalemat[:3, :3].T + scalemat[:3, 3]
