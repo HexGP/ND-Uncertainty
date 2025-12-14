@@ -166,9 +166,64 @@ def fix_mesh_if_scene(mesh_file):
                 geom = mesh.geometry[key]
                 if isinstance(geom, trimesh.Trimesh):
                     meshes_to_combine.append(geom)
+                else:
+                    print(f"    Found non-Trimesh geometry: {type(geom)}")
+            
+            # Also try to get meshes from scene.dump() if available
+            if not meshes_to_combine:
+                print(f"  No Trimesh objects found in geometry, trying scene.dump()...")
+                try:
+                    # Try to export and reload
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(suffix='.ply', delete=False) as tmp:
+                        tmp_path = tmp.name
+                    mesh.export(tmp_path)
+                    reloaded = trimesh.load(tmp_path, process=False)
+                    if isinstance(reloaded, trimesh.Trimesh):
+                        meshes_to_combine = [reloaded]
+                        os.unlink(tmp_path)
+                    elif isinstance(reloaded, trimesh.Scene):
+                        # Still a scene, try extracting
+                        for key in reloaded.geometry.keys():
+                            geom = reloaded.geometry[key]
+                            if isinstance(geom, trimesh.Trimesh):
+                                meshes_to_combine.append(geom)
+                        os.unlink(tmp_path)
+                except Exception as e:
+                    print(f"    Failed to dump/reload: {e}")
             
             if not meshes_to_combine:
-                print(f"  Warning: Scene has no valid meshes, using original")
+                print(f"  Warning: Scene has no valid meshes, trying manual vertex extraction...")
+                # Last resort: try to extract vertices directly from scene
+                try:
+                    # Get all vertices and faces from the scene
+                    all_verts = []
+                    all_faces = []
+                    offset = 0
+                    for name, geom in mesh.geometry.items():
+                        if hasattr(geom, 'vertices') and hasattr(geom, 'faces'):
+                            verts = np.array(geom.vertices)
+                            faces = np.array(geom.faces)
+                            if len(verts) > 0 and len(faces) > 0:
+                                all_verts.append(verts)
+                                all_faces.append(faces + offset)
+                                offset += len(verts)
+                    if all_verts:
+                        import numpy as np
+                        combined_verts = np.vstack(all_verts)
+                        combined_faces = np.vstack(all_faces)
+                        single_mesh = trimesh.Trimesh(vertices=combined_verts, faces=combined_faces)
+                        base_name = os.path.splitext(mesh_file)[0]
+                        base_name = base_name.replace('_fixed', '').replace('_combined', '')
+                        import time
+                        temp_file = f"{base_name}_fixed_{int(time.time())}.ply"
+                        single_mesh.export(temp_file)
+                        print(f"  Created mesh from manual vertex extraction: {temp_file}")
+                        return temp_file
+                except Exception as e:
+                    print(f"    Manual extraction failed: {e}")
+                
+                print(f"  Error: Cannot convert Scene to single mesh, using original")
                 return mesh_file
             
             # Combine all meshes
@@ -278,8 +333,8 @@ def evaluate_mesh(rec_mesh, gt_mesh, cull_mesh_script=None, data_dir=None, scan_
 def cull_mesh_if_needed(mesh_file, data_dir, scan_idx, scan_name, out_dir):
     """Cull mesh if cull_mesh.py script is available."""
     possible_paths = [
+        os.path.join(os.path.dirname(__file__), 'evals', 'replica_eval', 'cull_mesh.py'),  # ND-Uncertainty version first
         os.path.join(os.path.dirname(__file__), '..', 'ND-SDF', 'evals', 'replica_eval', 'cull_mesh.py'),
-        os.path.join(os.path.dirname(__file__), 'evals', 'replica_eval', 'cull_mesh.py'),
         os.path.join(os.path.dirname(__file__), 'scripts', 'cull_mesh.py'),
     ]
     
@@ -353,11 +408,23 @@ def main():
         
         print(f"  Using mesh: {mesh_file}")
         
+        # Fix Scene objects BEFORE culling (so cull_mesh.py gets a proper Trimesh)
+        fixed_mesh = fix_mesh_if_scene(mesh_file)
+        if fixed_mesh != mesh_file:
+            print(f"  Fixed Scene object, using: {fixed_mesh}")
+        
         # Cull mesh if needed
         if not args.skip_cull:
-            culled_mesh = cull_mesh_if_needed(mesh_file, args.data_dir, scan_idx, scan, args.out_dir)
+            culled_mesh = cull_mesh_if_needed(fixed_mesh, args.data_dir, scan_idx, scan, args.out_dir)
+            # If culling failed, use the fixed mesh (not the original Scene)
+            if culled_mesh == fixed_mesh and fixed_mesh != mesh_file:
+                # Culling failed but we have a fixed mesh, use that
+                pass
+            elif culled_mesh == mesh_file:
+                # Culling failed and we're back to original, use fixed mesh instead
+                culled_mesh = fixed_mesh
         else:
-            culled_mesh = mesh_file
+            culled_mesh = fixed_mesh
         
         # Find GT mesh
         gt_mesh = os.path.join(args.data_dir, 'cull_GTmesh', f"{scan}.ply")
