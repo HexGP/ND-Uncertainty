@@ -175,7 +175,7 @@ def fix_mesh_if_scene(mesh_file):
             try:
                 combined_mesh = trimesh.util.concatenate(meshes_to_combine)
             except Exception as e:
-                print(f"  Warning: Concatenation failed ({e}), trying alternative method...")
+                print(f"  Warning: Concatenation failed ({e}), using first mesh only")
                 # Alternative: just use the first mesh if concatenation fails
                 if meshes_to_combine:
                     combined_mesh = meshes_to_combine[0]
@@ -188,31 +188,29 @@ def fix_mesh_if_scene(mesh_file):
             # Save the combined mesh to a temporary file
             # Use a unique name to avoid conflicts with previous runs
             import time
-            base_name = mesh_file.replace('.ply', '').replace('_combined', '')
+            base_name = os.path.splitext(mesh_file)[0]
+            # Remove any existing _fixed or _combined suffixes
+            base_name = base_name.replace('_fixed', '').replace('_combined', '')
             temp_file = f"{base_name}_fixed_{int(time.time())}.ply"
             combined_mesh.export(temp_file)
             
             # Verify the exported file is valid (not a Scene)
             verify_mesh = trimesh.load(temp_file, process=False)
             if isinstance(verify_mesh, trimesh.Scene):
-                print(f"  Error: Combined mesh is still a Scene after export")
-                # Try exporting as a different format or using scene.dump
-                try:
-                    # Export the scene as a single mesh by dumping and loading
-                    scene_file = temp_file.replace('.ply', '_scene.ply')
-                    mesh.export(scene_file)
-                    # Try to load and extract
-                    loaded = trimesh.load(scene_file, process=False)
-                    if isinstance(loaded, trimesh.Trimesh):
-                        os.rename(scene_file, temp_file)
-                        print(f"  Created fixed mesh: {temp_file}")
-                        return temp_file
-                    else:
-                        print(f"  Error: Cannot convert Scene to single mesh")
-                        return mesh_file
-                except Exception as e2:
-                    print(f"  Error: Failed to fix Scene ({e2}), using original")
-                    return mesh_file
+                print(f"  Error: Combined mesh is still a Scene after export, trying manual combination...")
+                # Manual combination: combine vertices and faces
+                import numpy as np
+                all_verts = []
+                all_faces = []
+                offset = 0
+                for m in meshes_to_combine:
+                    all_verts.extend(m.vertices)
+                    all_faces.extend(m.faces + offset)
+                    offset += len(m.vertices)
+                single_mesh = trimesh.Trimesh(vertices=np.array(all_verts), faces=np.array(all_faces))
+                single_mesh.export(temp_file)
+                print(f"  Created fixed mesh using manual combination: {temp_file}")
+                return temp_file
             
             print(f"  Created combined mesh: {temp_file}")
             return temp_file
@@ -222,6 +220,8 @@ def fix_mesh_if_scene(mesh_file):
         return mesh_file
     except Exception as e:
         print(f"  Warning: Could not fix Scene mesh: {e}, using original")
+        import traceback
+        traceback.print_exc()
         return mesh_file
 
 
@@ -371,14 +371,20 @@ def main():
         
         # Evaluate
         print(f"  Evaluating against GT: {gt_mesh}")
-        metrics = evaluate_mesh(culled_mesh, gt_mesh)
-        
-        if metrics is None:
-            print(f"  Failed to evaluate {scan}")
+        try:
+            metrics = evaluate_mesh(culled_mesh, gt_mesh)
+            
+            if metrics is None:
+                print(f"  Failed to evaluate {scan} - metrics returned None")
+                results[scan] = None
+            else:
+                results[scan] = metrics
+                print(f"  Results: Normal C.={metrics['normal_avg']:.2f}, Chamfer={metrics['chamfer']:.2f}, F-score={metrics['fscore']:.2f}")
+        except Exception as e:
+            print(f"  Exception during evaluation: {e}")
+            import traceback
+            traceback.print_exc()
             results[scan] = None
-        else:
-            results[scan] = metrics
-            print(f"  Results: Normal C.={metrics['normal_avg']:.2f}, Chamfer={metrics['chamfer']:.2f}, F-score={metrics['fscore']:.2f}")
     
     # Print table
     print("\n" + "="*80)
