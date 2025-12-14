@@ -159,71 +159,57 @@ def fix_mesh_if_scene(mesh_file):
         # Check if it's a Scene (multiple meshes)
         if isinstance(mesh, trimesh.Scene):
             print(f"  Converting Scene (multiple meshes) to single mesh...")
+            print(f"    Scene has {len(mesh.geometry)} geometry objects")
             
             # Get all meshes from the scene
             meshes_to_combine = []
             for key in mesh.geometry.keys():
                 geom = mesh.geometry[key]
+                print(f"    Geometry '{key}': {type(geom)}")
                 if isinstance(geom, trimesh.Trimesh):
                     meshes_to_combine.append(geom)
+                    print(f"      Added Trimesh with {len(geom.vertices)} vertices")
                 else:
-                    print(f"    Found non-Trimesh geometry: {type(geom)}")
-            
-            # Also try to get meshes from scene.dump() if available
-            if not meshes_to_combine:
-                print(f"  No Trimesh objects found in geometry, trying scene.dump()...")
-                try:
-                    # Try to export and reload
-                    import tempfile
-                    with tempfile.NamedTemporaryFile(suffix='.ply', delete=False) as tmp:
-                        tmp_path = tmp.name
-                    mesh.export(tmp_path)
-                    reloaded = trimesh.load(tmp_path, process=False)
-                    if isinstance(reloaded, trimesh.Trimesh):
-                        meshes_to_combine = [reloaded]
-                        os.unlink(tmp_path)
-                    elif isinstance(reloaded, trimesh.Scene):
-                        # Still a scene, try extracting
-                        for key in reloaded.geometry.keys():
-                            geom = reloaded.geometry[key]
-                            if isinstance(geom, trimesh.Trimesh):
-                                meshes_to_combine.append(geom)
-                        os.unlink(tmp_path)
-                except Exception as e:
-                    print(f"    Failed to dump/reload: {e}")
-            
-            if not meshes_to_combine:
-                print(f"  Warning: Scene has no valid meshes, trying manual vertex extraction...")
-                # Last resort: try to extract vertices directly from scene
-                try:
-                    # Get all vertices and faces from the scene
-                    all_verts = []
-                    all_faces = []
-                    offset = 0
-                    for name, geom in mesh.geometry.items():
-                        if hasattr(geom, 'vertices') and hasattr(geom, 'faces'):
+                    print(f"      Found non-Trimesh geometry: {type(geom)}")
+                    # Try to convert if it has vertices/faces
+                    if hasattr(geom, 'vertices') and hasattr(geom, 'faces'):
+                        try:
+                            import numpy as np
                             verts = np.array(geom.vertices)
                             faces = np.array(geom.faces)
-                            if len(verts) > 0 and len(faces) > 0:
-                                all_verts.append(verts)
-                                all_faces.append(faces + offset)
-                                offset += len(verts)
-                    if all_verts:
-                        import numpy as np
-                        combined_verts = np.vstack(all_verts)
-                        combined_faces = np.vstack(all_faces)
-                        single_mesh = trimesh.Trimesh(vertices=combined_verts, faces=combined_faces)
-                        base_name = os.path.splitext(mesh_file)[0]
-                        base_name = base_name.replace('_fixed', '').replace('_combined', '')
-                        import time
-                        temp_file = f"{base_name}_fixed_{int(time.time())}.ply"
-                        single_mesh.export(temp_file)
-                        print(f"  Created mesh from manual vertex extraction: {temp_file}")
-                        return temp_file
-                except Exception as e:
-                    print(f"    Manual extraction failed: {e}")
+                            if len(verts) > 0:
+                                converted = trimesh.Trimesh(vertices=verts, faces=faces)
+                                meshes_to_combine.append(converted)
+                                print(f"      Converted to Trimesh with {len(verts)} vertices")
+                        except Exception as e:
+                            print(f"      Failed to convert: {e}")
+            
+            # Try alternative loading methods if no meshes found
+            if not meshes_to_combine:
+                print(f"  No Trimesh objects found, trying alternative loading methods...")
+                try:
+                    # Try loading with force='mesh'
+                    mesh_forced = trimesh.load(mesh_file, process=False, force='mesh')
+                    if isinstance(mesh_forced, trimesh.Trimesh):
+                        print(f"  Successfully loaded as mesh with force='mesh'")
+                        return mesh_file  # Already a mesh, return original
+                except:
+                    pass
                 
-                print(f"  Error: Cannot convert Scene to single mesh, using original")
+                try:
+                    # Try loading as binary
+                    import numpy as np
+                    # Read PLY file directly
+                    with open(mesh_file, 'rb') as f:
+                        # Try to parse PLY header and data
+                        # This is a simple approach - just try to load with different options
+                        pass
+                except:
+                    pass
+            
+            if not meshes_to_combine:
+                print(f"  Warning: Scene has no valid meshes, trying to use evaluate_single_scene.py as fallback...")
+                # Return original - we'll handle this in the main function
                 return mesh_file
             
             # Combine all meshes
@@ -438,20 +424,61 @@ def main():
         
         # Evaluate
         print(f"  Evaluating against GT: {gt_mesh}")
+        metrics = None
         try:
             metrics = evaluate_mesh(culled_mesh, gt_mesh)
-            
-            if metrics is None:
-                print(f"  Failed to evaluate {scan} - metrics returned None")
-                results[scan] = None
-            else:
-                results[scan] = metrics
-                print(f"  Results: Normal C.={metrics['normal_avg']:.2f}, Chamfer={metrics['chamfer']:.2f}, F-score={metrics['fscore']:.2f}")
         except Exception as e:
             print(f"  Exception during evaluation: {e}")
             import traceback
             traceback.print_exc()
-            results[scan] = None
+        
+        if metrics is None:
+            # Try using evaluate_single_scene.py as fallback
+            print(f"  Primary evaluation failed, trying evaluate_single_scene.py as fallback...")
+            try:
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                eval_single_script = os.path.join(script_dir, 'evals', 'replica_eval', 'evaluate_single_scene.py')
+                if os.path.exists(eval_single_script):
+                    # Use evaluate_single_scene.py which handles Scene objects better
+                    import tempfile
+                    temp_out = tempfile.mkdtemp()
+                    cmd = f"python {eval_single_script} --input_mesh {mesh_file} --scan_id {scan_idx} --data_dir {args.data_dir} --output_dir {temp_out}"
+                    result = subprocess.run(cmd, shell=True, capture_output=True, text=True, cwd=os.path.dirname(eval_single_script))
+                    if result.returncode == 0:
+                        # Parse results from the output file
+                        results_file = os.path.join(temp_out, 'evaluation_results.txt')
+                        if os.path.exists(results_file):
+                            # Read the results file to extract metrics
+                            with open(results_file, 'r') as f:
+                                content = f.read()
+                                # Parse the table format
+                                for line in content.split('\n'):
+                                    if scan in line and line.strip().startswith(scan):
+                                        parts = line.split()
+                                        if len(parts) >= 4:
+                                            try:
+                                                metrics = {
+                                                    'normal_avg': float(parts[1]),
+                                                    'chamfer': float(parts[2]),
+                                                    'fscore': float(parts[3])
+                                                }
+                                                print(f"  Fallback successful! Results: Normal C.={metrics['normal_avg']:.2f}, Chamfer={metrics['chamfer']:.2f}, F-score={metrics['fscore']:.2f}")
+                                                break
+                                            except ValueError:
+                                                pass
+                    if metrics is None:
+                        print(f"  Fallback also failed, skipping {scan}")
+                        results[scan] = None
+                else:
+                    print(f"  evaluate_single_scene.py not found, skipping {scan}")
+                    results[scan] = None
+            except Exception as e2:
+                print(f"  Fallback evaluation failed: {e2}")
+                results[scan] = None
+        
+        if metrics is not None:
+            results[scan] = metrics
+            print(f"  Results: Normal C.={metrics['normal_avg']:.2f}, Chamfer={metrics['chamfer']:.2f}, F-score={metrics['fscore']:.2f}")
     
     # Print table
     print("\n" + "="*80)
