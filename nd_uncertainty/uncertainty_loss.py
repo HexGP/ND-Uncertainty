@@ -184,7 +184,9 @@ def heteroscedastic_color_loss(rgb_pred, rgb_gt, sigma, mask=None):
     Returns:
         loss: scalar heteroscedastic color loss
     """
-    # Ensure sigma is positive and has minimum value for numerical stability
+    # Ensure sigma is positive and clamped to reasonable range for numerical stability
+    # Default clamping: [1e-6, inf] - but should be clamped to [sigma_min, sigma_max] by caller
+    # This is a safety check in case caller forgets to clamp
     sigma = sigma.clamp(min=1e-6)
     
     # Compute squared error: ||C(r) - Ĉ(r)||^2

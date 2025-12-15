@@ -225,6 +225,12 @@ class UncertaintyAwareLoss(nn.Module):
         rgb_gt = sample['rgb']            # (B, R, 3)
         sigma = sample['beta']             # (B, R, 1) - uncertainty σ (beta in code, sigma in formula)
         
+        # CRITICAL FIX: Clamp sigma to [sigma_min, sigma_max] to prevent extreme down-weighting
+        # Per ND-SDF principles (from implementation notes): σ ∈ [1e-3, 0.5] to prevent extreme down-weighting
+        # If sigma > sigma_max, the weighted_term = 0.5 * ||C-Ĉ||² / σ² becomes too small,
+        # making color loss negligible and preventing proper color learning → dark images + poor SDF → corrupted meshes
+        sigma = sigma.clamp(min=self.sigma_min, max=self.sigma_max)
+        
         # Get mask (foreground + not outside)
         outside = output.get('outside', None)  # (B, R, 1)
         foreground_mask = sample.get('mask', None)  # (B, R, 1)
