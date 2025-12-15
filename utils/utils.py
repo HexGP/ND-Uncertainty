@@ -155,6 +155,27 @@ def get_plot_data(outputs, sample, h, w, monocular_depth = True, with_single=Fal
             # plt.ylabel('count')
             # plt.show()
 
+        # Uncertainty visualization (beta/sigma)
+        if 'beta' in outputs:
+            beta = outputs['beta'][b].cpu().numpy()  # (h*w, 1)
+            # Clamp to reasonable range first (per implementation notes: [1e-3, 0.5])
+            beta_clamped = np.clip(beta, 1e-3, 0.5)
+            # Normalize to [0, 1] for visualization using actual min/max for better contrast
+            beta_min = beta_clamped.min()
+            beta_max = beta_clamped.max()
+            if beta_max > beta_min:
+                beta_normalized = (beta_clamped - beta_min) / (beta_max - beta_min + 1e-6)
+            else:
+                # All values are the same, show as uniform (but not solid blue)
+                beta_normalized = np.ones_like(beta_clamped) * 0.5  # Middle gray
+            # Reshape and convert to colormap
+            beta_2d = beta_normalized.reshape(h, w)
+            beta_uint8 = (beta_2d * 255).astype(np.uint8)
+            # Use VIRIDIS colormap (blue to yellow) for better visualization
+            beta_colormap = cv2.applyColorMap(beta_uint8, cv2.COLORMAP_VIRIDIS)
+            plot_uncertainty = Image.fromarray(cv2.cvtColor(beta_colormap, cv2.COLOR_BGR2RGB))
+            plot_output['uncertainty'] = plot_uncertainty
+
         plot_output['idx'] = idx
         plot_output['rgb'] = plot_rgb
         plot_output['rgb_diff'] = plot_rgb_diff

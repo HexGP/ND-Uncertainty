@@ -261,15 +261,25 @@ class UncertaintyTrainer(NDSDFTrainer):
         beta_np = beta_image.numpy()
         acc_np = acc_map.numpy() if acc_map is not None else np.ones_like(beta_np)
         
-        # Match NeRF-on-the-Go's approach:
-        # - Use fixed bounds lo=0.2, hi=2 (not min/max normalization)
+        # Match NeRF-on-the-Go's approach but use actual sigma range:
+        # - Use bounds matching sigma range [sigma_min, sigma_max] = [1e-3, 0.5] per implementation notes
         # - Use turbo colormap (not jet)
         # - Apply accumulation/weight map
         
-        # Clip to fixed bounds and normalize to [0, 1]
-        lo, hi = 0.2, 2.0
-        beta_clipped = np.clip(beta_np, lo, hi)
-        beta_norm = (beta_clipped - lo) / (hi - lo)
+        # Clip to sigma bounds first (per implementation notes: σ ∈ [1e-3, 0.5])
+        sigma_min = getattr(self.conf.loss, 'sigma_min', 1e-3)
+        sigma_max = getattr(self.conf.loss, 'sigma_max', 0.5)
+        beta_clipped = np.clip(beta_np, sigma_min, sigma_max)
+        
+        # Normalize using actual min/max for better contrast (not fixed bounds)
+        beta_actual_min = beta_clipped.min()
+        beta_actual_max = beta_clipped.max()
+        if beta_actual_max > beta_actual_min:
+            # Use actual range for better visualization contrast
+            beta_norm = (beta_clipped - beta_actual_min) / (beta_actual_max - beta_actual_min + 1e-6)
+        else:
+            # All values are the same, show as uniform middle value
+            beta_norm = np.ones_like(beta_clipped) * 0.5
         
         # Apply turbo colormap
         turbo_cmap = cm.get_cmap('turbo')

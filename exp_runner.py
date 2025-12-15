@@ -283,6 +283,22 @@ class Trainer():
             sample = next(iter(self.valid_dataloader))
             # sample = self.valid_dataset.__getitem__(0)
             sample = {k: v.cuda() for k, v in sample.items()}
+            
+            # Compute uncertainty (beta) if uncertainty is enabled and pipeline exists
+            if hasattr(self, 'uncertainty_pipeline') and self.uncertainty_pipeline is not None:
+                # Prepare sample for uncertainty computation (need sampling_idx for full image)
+                # For validation, use all pixels (no sampling)
+                B = sample['idx'].shape[0]
+                sample['sampling_idx'] = torch.arange(self.valid_total_pixels, device=sample['idx'].device).unsqueeze(0).repeat(B, 1)
+                # Compute beta using uncertainty pipeline
+                from nd_uncertainty.trainer import UncertaintyTrainer
+                if isinstance(self, UncertaintyTrainer):
+                    sample = self.compute_uncertainty(sample)
+                else:
+                    # If not using UncertaintyTrainer, try to compute beta if method exists
+                    if hasattr(self, 'compute_uncertainty'):
+                        sample = self.compute_uncertainty(sample)
+            
             split_sample = split_input(sample,self.valid_total_pixels, self.chunk)
             outputs = []
             for s in tqdm(split_sample, total=len(split_sample), desc=f'rendering valid...', file=sys.stdout):
@@ -295,6 +311,17 @@ class Trainer():
                         d['biased_normal'] = output['biased_normal'].detach()
                     if 'biased_mono_normal' in output:
                         d['biased_mono_normal'] = output['biased_mono_normal'].detach()
+                # Extract uncertainty (beta/sigma) for visualization if available
+                # Beta should be in original sample (before split), need to extract corresponding chunk
+                if 'beta' in sample:
+                    # Get the chunk indices for this split
+                    chunk_start = len(outputs) * self.chunk
+                    chunk_end = min(chunk_start + self.chunk, self.valid_total_pixels)
+                    d['beta'] = sample['beta'][:, chunk_start:chunk_end, :].detach()
+                elif 'beta' in s:
+                    d['beta'] = s['beta'].detach()
+                elif 'beta' in output:
+                    d['beta'] = output['beta'].detach()
                 outputs.append(d)
             outputs = merge_output(outputs) # plot rgb、depth、normal
             plot_outputs = get_plot_data(outputs, sample, self.valid_h,self.valid_w, monocular_depth=self.train_dataset.has_mono_depth)
