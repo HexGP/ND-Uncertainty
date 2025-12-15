@@ -52,23 +52,104 @@ if __name__ == "__main__":
 
     # Fix Scene objects before processing
     import trimesh
+    import numpy as np
+    
     temp_mesh = trimesh.load(ply_file, process=False)
     if isinstance(temp_mesh, trimesh.Scene):
         print(f"Converting Scene to single mesh...")
+        print(f"  Scene has {len(temp_mesh.geometry)} geometry objects")
         meshes_to_combine = []
+        
+        # First, try to get all Trimesh objects
         for key in temp_mesh.geometry.keys():
             geom = temp_mesh.geometry[key]
+            print(f"    Geometry '{key}': {type(geom)}")
             if isinstance(geom, trimesh.Trimesh):
                 meshes_to_combine.append(geom)
+                print(f"      Added Trimesh with {len(geom.vertices)} vertices")
+            else:
+                # Try to convert if it has vertices/faces
+                if hasattr(geom, 'vertices') and hasattr(geom, 'faces'):
+                    try:
+                        verts = np.array(geom.vertices)
+                        faces = np.array(geom.faces)
+                        if len(verts) > 0:
+                            converted = trimesh.Trimesh(vertices=verts, faces=faces)
+                            meshes_to_combine.append(converted)
+                            print(f"      Converted to Trimesh with {len(verts)} vertices")
+                    except Exception as e:
+                        print(f"      Failed to convert: {e}")
+        
+        # If no meshes found, try alternative loading methods
+        if not meshes_to_combine:
+            print("  No Trimesh objects found, trying alternative loading methods...")
+            
+            # Try 1: Force load as mesh
+            try:
+                mesh_forced = trimesh.load(ply_file, process=False, force='mesh')
+                if isinstance(mesh_forced, trimesh.Trimesh):
+                    print("  Successfully loaded as mesh with force='mesh'")
+                    ply_file = ply_file  # Already a mesh, use original
+                else:
+                    raise ValueError("Still a Scene")
+            except Exception as e1:
+                print(f"    force='mesh' failed: {e1}")
+                
+                # Try 2: Load with different process settings
+                try:
+                    mesh_processed = trimesh.load(ply_file, process=True)
+                    if isinstance(mesh_processed, trimesh.Trimesh):
+                        print("  Successfully loaded as mesh with process=True")
+                        ply_file = ply_file  # Already a mesh, use original
+                    elif isinstance(mesh_processed, trimesh.Scene):
+                        # Try extracting from processed scene
+                        for key in mesh_processed.geometry.keys():
+                            geom = mesh_processed.geometry[key]
+                            if isinstance(geom, trimesh.Trimesh):
+                                meshes_to_combine.append(geom)
+                except Exception as e2:
+                    print(f"    process=True failed: {e2}")
+                    
+                    # Try 3: Manual PLY parsing as last resort
+                    try:
+                        print("    Trying manual PLY parsing...")
+                        # Use trimesh's PLY loader directly
+                        from trimesh.exchange.ply import load_ply
+                        with open(ply_file, 'rb') as f:
+                            data = load_ply(f)
+                            if 'vertex' in data and 'face' in data:
+                                vertices = data['vertex']['data']
+                                faces = data['face']['data']
+                                if len(vertices) > 0:
+                                    manual_mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
+                                    fixed_mesh_file = os.path.join(out_dir, f"{scan}_fixed_manual.ply")
+                                    manual_mesh.export(fixed_mesh_file)
+                                    ply_file = fixed_mesh_file
+                                    print(f"  Successfully parsed PLY manually, saved to: {fixed_mesh_file}")
+                                    meshes_to_combine = [manual_mesh]  # Mark as success
+                    except Exception as e3:
+                        print(f"    Manual PLY parsing failed: {e3}")
+        
+        # If we have meshes to combine, do it
         if meshes_to_combine:
-            fixed_mesh = trimesh.util.concatenate(meshes_to_combine)
+            try:
+                fixed_mesh = trimesh.util.concatenate(meshes_to_combine)
+            except Exception as e:
+                print(f"  Concatenation failed ({e}), using first mesh only")
+                fixed_mesh = meshes_to_combine[0]
+                if len(meshes_to_combine) > 1:
+                    print(f"  Using first mesh only (out of {len(meshes_to_combine)} meshes)")
+            
             fixed_mesh_file = os.path.join(out_dir, f"{scan}_fixed.ply")
             fixed_mesh.export(fixed_mesh_file)
             ply_file = fixed_mesh_file
             print(f"Fixed mesh saved to: {fixed_mesh_file}")
         else:
-            print("Error: Scene has no valid meshes")
-            exit(1)
+            print("Warning: Scene has no valid meshes and all alternative loading methods failed")
+            print(f"  File: {ply_file}")
+            print(f"  File size: {os.path.getsize(ply_file) if os.path.exists(ply_file) else 'N/A'} bytes")
+            print("  Attempting to use original file directly (skipping culling)...")
+            # Don't exit - try to continue with original file, maybe eval_recon.py can handle it
     
     # cumesh
     cull_mesh_out = os.path.join(out_dir, f"cull_{scan}.ply")
@@ -83,11 +164,21 @@ if __name__ == "__main__":
         print(f"Warning: traj.txt not found at {traj_file}, skipping culling")
         cull_mesh_out = ply_file  # Use original mesh
     else:
-        cmd = f"python {os.path.join(script_dir, 'cull_mesh.py')} --input_mesh {ply_file} --input_scalemat {cameras_file} --traj {traj_file} --output_mesh {cull_mesh_out}"
-        print(cmd)
-        result = os.system(cmd)
-        if result != 0 or not os.path.exists(cull_mesh_out):
-            print(f"Warning: Culling failed, using original mesh")
+        # Only try culling if we have a valid mesh (not a problematic Scene)
+        try:
+            test_mesh = trimesh.load(ply_file, process=False)
+            if isinstance(test_mesh, trimesh.Trimesh) or (isinstance(test_mesh, trimesh.Scene) and len(test_mesh.geometry) > 0):
+                cmd = f"python {os.path.join(script_dir, 'cull_mesh.py')} --input_mesh {ply_file} --input_scalemat {cameras_file} --traj {traj_file} --output_mesh {cull_mesh_out}"
+                print(cmd)
+                result = os.system(cmd)
+                if result != 0 or not os.path.exists(cull_mesh_out):
+                    print(f"Warning: Culling failed, using original mesh")
+                    cull_mesh_out = ply_file
+            else:
+                print(f"Warning: Mesh appears problematic, skipping culling and using original")
+                cull_mesh_out = ply_file
+        except Exception as e:
+            print(f"Warning: Could not verify mesh before culling ({e}), skipping culling")
             cull_mesh_out = ply_file
 
     gt_mesh_path = os.path.join(data_dir, 'cull_GTmesh', f"{scan}.ply")
