@@ -123,7 +123,7 @@ for idx, scan in enumerate(scans):
     else:
         # Use first (original behavior)
         dirs = sorted(dirs)
-        cur_root = os.path.join(cur_root, dirs[0])
+    cur_root = os.path.join(cur_root, dirs[0])
     
     files = list(filter(os.path.isfile, glob.glob(os.path.join(cur_root, "plots/*.ply"))))
     if not files:
@@ -160,9 +160,9 @@ for idx, scan in enumerate(scans):
     print(f"  {cmd}")
     try:
         output = subprocess.check_output(cmd, shell=True, stderr=subprocess.STDOUT).decode("utf-8")
-        output = output.replace(" ", ",")
-        print(output)
-        evaluation_txt_file.write(f"{scan},{Path(ply_file).name},{output}")
-        evaluation_txt_file.flush()
+    output = output.replace(" ", ",")
+    print(output)
+    evaluation_txt_file.write(f"{scan},{Path(ply_file).name},{output}")
+    evaluation_txt_file.flush()
     except subprocess.CalledProcessError as e:
         print(f"  Error: Evaluation failed: {e.output.decode('utf-8')[:200] if e.output else 'No output'}")

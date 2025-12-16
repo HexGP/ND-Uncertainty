@@ -44,7 +44,10 @@ ENV/
 # Training outputs
 runs/
 runs_new/
+<<<<<<< HEAD
 runs_new1/
+=======
+>>>>>>> d77796eb25c607c00c99eec6721e9ae9df7bf416
 runs_unc_w0_1/
 runs_unc_w0_5/
 runs_test_unc/
