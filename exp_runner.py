@@ -235,7 +235,7 @@ class Trainer():
     def load_checkpoint(self, checkpoint):
         if checkpoint == 'latest':
             timestamp_dir = os.path.join(self.root_dir, self.exp_name)
-            # 找到最新的timestamp dir
+            # 找到最新的timestamp s
             timestamps = glob(os.path.join(timestamp_dir, '*'))
             ckpt_paths = []
             for timestamp in timestamps:
@@ -556,6 +556,28 @@ class Trainer():
                         beta_detached = beta.detach()
                         self.loger.add_scalar('uncertainty/beta_mean', beta_detached.mean().item(), self.cur_step)
                         self.loger.add_scalar('uncertainty/beta_std', beta_detached.std().item(), self.cur_step)
+                        
+                        # CLAMP SATURATION MONITORING: Check how many values hit clamp bounds
+                        # This helps detect if sigma is inflating (hitting max) or collapsing (hitting min)
+                        sigma_min = getattr(self.conf.loss, 'sigma_min', 1e-3)
+                        sigma_max = getattr(self.conf.loss, 'sigma_max', 0.5)
+                        
+                        # Count values at clamp bounds (with small tolerance for floating point)
+                        pct_at_min = (beta_detached <= sigma_min + 1e-5).float().mean().item() * 100
+                        pct_at_max = (beta_detached >= sigma_max - 1e-5).float().mean().item() * 100
+                        
+                        # Log clamp saturation percentages
+                        self.loger.add_scalar('uncertainty/pct_at_min_clamp', pct_at_min, self.cur_step)
+                        self.loger.add_scalar('uncertainty/pct_at_max_clamp', pct_at_max, self.cur_step)
+                        
+                        # Print warning if too many values are saturated (helps catch issues early)
+                        if pct_at_max > 50:
+                            print(f"[WARNING] Step {self.cur_step}: {pct_at_max:.1f}% of sigma at max clamp ({sigma_max}). "
+                                  f"Sigma is inflating - check learning rate and regularization.")
+                        elif pct_at_min > 50:
+                            print(f"[WARNING] Step {self.cur_step}: {pct_at_min:.1f}% of sigma at min clamp ({sigma_min}). "
+                                  f"Sigma is collapsing - check initialization.")
+                        
                         # Quantiles (guard older PyTorch with try/except)
                         try:
                             self.loger.add_scalar('uncertainty/beta_p90', beta_detached.quantile(0.9).item(), self.cur_step)

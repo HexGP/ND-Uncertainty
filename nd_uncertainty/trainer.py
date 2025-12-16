@@ -165,10 +165,18 @@ class UncertaintyTrainer(NDSDFTrainer):
             mean_beta = float(beta_flat.mean().item())
             std_beta = float(beta_flat.std(unbiased=False).item())
             
+            # CLAMP SATURATION MONITORING: Check how many values hit clamp bounds
+            sigma_min = getattr(self.conf.loss, 'sigma_min', 1e-3)
+            sigma_max = getattr(self.conf.loss, 'sigma_max', 0.5)
+            pct_at_min = (beta_flat <= sigma_min + 1e-5).float().mean().item() * 100
+            pct_at_max = (beta_flat >= sigma_max - 1e-5).float().mean().item() * 100
+            
             # Log every log_freq steps (same as other metrics)
             if self.cur_step % getattr(self.conf.train, 'log_freq', 10) == 0:
                 self.loger.add_scalar('uncertainty/train_mean_beta', mean_beta, self.cur_step)
                 self.loger.add_scalar('uncertainty/train_std_beta', std_beta, self.cur_step)
+                self.loger.add_scalar('uncertainty/train_pct_at_min_clamp', pct_at_min, self.cur_step)
+                self.loger.add_scalar('uncertainty/train_pct_at_max_clamp', pct_at_max, self.cur_step)
         
         return sample
 

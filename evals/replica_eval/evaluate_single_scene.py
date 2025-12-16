@@ -188,7 +188,7 @@ if __name__ == "__main__":
             print("  Cannot proceed with evaluation - mesh file is invalid or corrupted")
             exit(1)
         # If scene_converted is True, ply_file is already set correctly, continue
-    
+
     # cumesh
     cull_mesh_out = os.path.join(out_dir, f"cull_{scan}.ply")
     cameras_file = os.path.join(data_dir, f'scan{idx}', 'cameras.npz')
