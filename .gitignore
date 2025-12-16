@@ -43,7 +43,8 @@ ENV/
 
 # Training outputs
 runs/
-# runs_new/
+runs_new/
+runs_new1/
 runs_unc_w0_1/
 runs_unc_w0_5/
 runs_test_unc/
@@ -59,7 +60,7 @@ paper/
 # Evals (excluded as requested)
 evals/
 evaluation_results/
-
+evaluation_results_new/
 # OS
 .DS_Store
 Thumbs.db
