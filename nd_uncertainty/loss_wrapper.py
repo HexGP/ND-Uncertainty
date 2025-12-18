@@ -225,11 +225,28 @@ class UncertaintyAwareLoss(nn.Module):
         rgb_gt = sample['rgb']            # (B, R, 3)
         sigma = sample['beta']             # (B, R, 1) - uncertainty σ (beta in code, sigma in formula)
         
+        # CRITICAL: Check for NaN/Inf in sigma BEFORE clamping
+        # If sigma has NaN values from MLP, they'll propagate and crash training
+        if torch.isnan(sigma).any() or torch.isinf(sigma).any():
+            print(f"[ERROR] NaN/Inf in sigma before clamp! Replacing with safe value.")
+            sigma = torch.where(torch.isnan(sigma) | torch.isinf(sigma),
+                               torch.tensor(self.sigma_max, device=sigma.device, dtype=sigma.dtype),
+                               sigma)
+        
         # CRITICAL FIX: Clamp sigma to [sigma_min, sigma_max] to prevent extreme down-weighting
         # Per ND-SDF principles (from implementation notes): σ ∈ [1e-3, 0.5] to prevent extreme down-weighting
         # If sigma > sigma_max, the weighted_term = 0.5 * ||C-Ĉ||² / σ² becomes too small,
         # making color loss negligible and preventing proper color learning → dark images + poor SDF → corrupted meshes
+        # NOTE: sigma_min (1e-3) is very small - can cause numerical issues when dividing by sigma²
+        # Consider increasing sigma_min to 0.01 or 0.05 for scan 3 if NaNs persist
         sigma = sigma.clamp(min=self.sigma_min, max=self.sigma_max)
+        
+        # Verify no NaN after clamping
+        if torch.isnan(sigma).any():
+            print(f"[ERROR] NaN still present after clamp! This should not happen.")
+            sigma = torch.where(torch.isnan(sigma),
+                               torch.tensor(self.sigma_max, device=sigma.device, dtype=sigma.dtype),
+                               sigma)
         
         # Get mask (foreground + not outside)
         outside = output.get('outside', None)  # (B, R, 1)

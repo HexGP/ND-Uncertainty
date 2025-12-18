@@ -184,25 +184,72 @@ def heteroscedastic_color_loss(rgb_pred, rgb_gt, sigma, mask=None):
     Returns:
         loss: scalar heteroscedastic color loss
     """
+    # CRITICAL: Check for NaN/Inf in sigma before processing
+    # If sigma has NaN values, they'll propagate and crash training
+    if torch.isnan(sigma).any() or torch.isinf(sigma).any():
+        print(f"[ERROR] NaN/Inf detected in sigma! min={sigma.min().item():.6f}, max={sigma.max().item():.6f}, "
+              f"nan_count={torch.isnan(sigma).sum().item()}, inf_count={torch.isinf(sigma).sum().item()}")
+        # Replace NaN/Inf with a safe value (use max clamp as fallback)
+        sigma = torch.where(torch.isnan(sigma) | torch.isinf(sigma), 
+                           torch.tensor(0.5, device=sigma.device, dtype=sigma.dtype), 
+                           sigma)
+    
     # Ensure sigma is positive and clamped to reasonable range for numerical stability
     # Default clamping: [1e-6, inf] - but should be clamped to [sigma_min, sigma_max] by caller
     # This is a safety check in case caller forgets to clamp
+    # NOTE: sigma_min (1e-3) is very small - division by sigma² can cause overflow
+    # If sigma = 1e-3, then sigma² = 1e-6, and weighted_term = 0.5 * error² / 1e-6 = 500,000 * error²
+    # This can cause numerical instability if error is very small
     sigma = sigma.clamp(min=1e-6)
     
     # Compute squared error: ||C(r) - Ĉ(r)||^2
     # Sum over RGB channels: (B, R, 3) -> (B, R, 1)
     residual_sq = (rgb_pred - rgb_gt).pow(2).sum(dim=-1, keepdim=True)  # (B, R, 1)
     
+    # Check for NaN in residual_sq
+    if torch.isnan(residual_sq).any():
+        print(f"[ERROR] NaN detected in residual_sq!")
+        residual_sq = torch.where(torch.isnan(residual_sq), torch.tensor(0.0, device=residual_sq.device), residual_sq)
+    
     # First term: (1 / (2 * σ²)) * ||C - Ĉ||²
     # This down-weights errors when uncertainty is high
-    weighted_term = 0.5 * residual_sq / (sigma ** 2)  # (B, R, 1)
+    # CRITICAL: When sigma is at min (1e-3), sigma² = 1e-6, causing huge division
+    # Add epsilon to prevent division by extremely small numbers
+    sigma_sq = sigma ** 2
+    sigma_sq = torch.clamp(sigma_sq, min=1e-6)  # Ensure sigma² >= 1e-6 to prevent overflow
+    weighted_term = 0.5 * residual_sq / sigma_sq  # (B, R, 1)
+    
+    # Check for NaN/Inf in weighted_term
+    if torch.isnan(weighted_term).any() or torch.isinf(weighted_term).any():
+        print(f"[ERROR] NaN/Inf in weighted_term! Clamping to reasonable range.")
+        weighted_term = torch.clamp(weighted_term, min=0.0, max=1e6)  # Cap at 1e6 to prevent overflow
     
     # Second term: (1/2) * log(σ²) = log(σ)
     # This prevents σ from collapsing to zero (regularization)
-    log_term = 0.5 * torch.log(sigma ** 2)  # (B, R, 1)
+    # CRITICAL: log(sigma²) when sigma is at min (1e-3) gives log(1e-6) = -13.8
+    # This is fine, but ensure sigma² > 0 before taking log
+    log_term = 0.5 * torch.log(sigma_sq + 1e-8)  # Add small epsilon for numerical stability
     
     # Per-ray loss: L_color(r) = weighted_term + log_term
     loss_per_ray = weighted_term + log_term  # (B, R, 1)
+    
+    # CRITICAL: Check for NaN/Inf in loss_per_ray before masking
+    # This can happen when:
+    # 1. sigma is at min (1e-3) → sigma² = 1e-6 → weighted_term = 500,000 * error² (can overflow)
+    # 2. sigma has NaN values from MLP
+    # 3. residual_sq has NaN values
+    if torch.isnan(loss_per_ray).any() or torch.isinf(loss_per_ray).any():
+        nan_count = torch.isnan(loss_per_ray).sum().item()
+        inf_count = torch.isinf(loss_per_ray).sum().item()
+        print(f"[ERROR] NaN/Inf in loss_per_ray! nan_count={nan_count}, inf_count={inf_count}")
+        print(f"  sigma range: [{sigma.min().item():.6f}, {sigma.max().item():.6f}]")
+        print(f"  residual_sq range: [{residual_sq.min().item():.6f}, {residual_sq.max().item():.6f}]")
+        print(f"  weighted_term range: [{weighted_term.min().item():.6f}, {weighted_term.max().item():.6f}]")
+        print(f"  log_term range: [{log_term.min().item():.6f}, {log_term.max().item():.6f}]")
+        # Replace NaN/Inf with a safe fallback value
+        loss_per_ray = torch.where(torch.isnan(loss_per_ray) | torch.isinf(loss_per_ray),
+                                  torch.tensor(1.0, device=loss_per_ray.device, dtype=loss_per_ray.dtype),
+                                  loss_per_ray)
     
     # Apply mask if provided
     if mask is not None:
@@ -219,10 +266,16 @@ def heteroscedastic_color_loss(rgb_pred, rgb_gt, sigma, mask=None):
         # Average over all rays
         loss = loss_per_ray.mean()
     
-    # CRITICAL FIX: Prevent negative loss to avoid numerical instability
+    # CRITICAL FIX: Prevent negative loss and NaN to avoid numerical instability
     # When sigma saturates at max clamp, log_term can dominate and make loss negative
     # Negative loss → NaN → training collapse
-    loss = torch.clamp(loss, min=0.0)
+    # Also clamp to prevent overflow (max at 1e6)
+    loss = torch.clamp(loss, min=0.0, max=1e6)
+    
+    # Final NaN check
+    if torch.isnan(loss) or torch.isinf(loss):
+        print(f"[ERROR] Final loss is NaN/Inf! Replacing with safe value.")
+        loss = torch.tensor(1.0, device=loss.device, dtype=loss.dtype)
     
     return loss
 
