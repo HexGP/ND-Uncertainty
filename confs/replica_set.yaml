@@ -240,8 +240,11 @@ loss:
   init_log_sigma: -3.0  # s_0 = -3 → σ_0 ≈ 0.05 (tune: -4, -3, -2; decrease by -0.5 if geometry degrades)
   
   # Sigma clamping: σ ∈ [σ_min, σ_max] to prevent extreme down-weighting
-  sigma_min: 1e-3  # Minimum σ value (ND-SDF default)
-  sigma_max: 0.5  # Maximum σ value (ND-SDF default, can increase to 1.0 if needed)
+  # CRITICAL FIX: Increased sigma_min from 1e-3 to 0.01 to prevent numerical overflow
+  # When sigma = 1e-3, sigma² = 1e-6, causing weighted_term = 500,000 * error² → NaN
+  # Increased sigma_max from 0.5 to 2.0 to allow scan 3's natural uncertainty range (0.6-1.0+)
+  sigma_min: 0.01  # Minimum σ value (increased from 1e-3 to prevent overflow)
+  sigma_max: 2.0  # Maximum σ value (increased from 0.5 to allow harder scenes like scan 3)
   
   # Legacy parameters (kept for backward compatibility, not used in heteroscedastic mode)
   unc_clip_min: 0.1  # Legacy: minimum uncertainty value (replaced by sigma_min)
