@@ -219,6 +219,11 @@ def heteroscedastic_color_loss(rgb_pred, rgb_gt, sigma, mask=None):
         # Average over all rays
         loss = loss_per_ray.mean()
     
+    # CRITICAL FIX: Prevent negative loss to avoid numerical instability
+    # When sigma saturates at max clamp, log_term can dominate and make loss negative
+    # Negative loss → NaN → training collapse
+    loss = torch.clamp(loss, min=0.0)
+    
     return loss
 
 
