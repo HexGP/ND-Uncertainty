@@ -274,49 +274,82 @@ class UncertaintyAwareLoss(nn.Module):
         # Step 1: Compute all deterministic losses (SDF, eikonal, normal, etc.)
         # These remain unchanged - no uncertainty weighting
         losses = self.base_loss(output, sample, prog)
+        base_total = losses['total']
         
-        # Step 2: Replace standard RGB L1 loss with heteroscedastic color loss
-        # Get the original RGB L1 loss weight
-        lambda_rgb_l1 = self.base_loss.lambda_rgb_l1(prog)
-        
-        # Compute heteroscedastic color loss: L_color(r) = (1/(2σ²)) * ||C - Ĉ||² + (1/2) * log(σ²)
-        L_color = heteroscedastic_color_loss(rgb_pred, rgb_gt, sigma, mask=mask)
-        
-        # Replace rgb_l1 in total loss
-        # Remove the original rgb_l1 contribution from total
-        if 'rgb_l1' in losses and lambda_rgb_l1 > 0:
-            base_total = losses['total']
-            # Subtract original rgb_l1 contribution
-            base_total = base_total - lambda_rgb_l1 * losses['rgb_l1']
-            # Add heteroscedastic color loss with same weight (λ_color = weight_unc)
+        # Step 2: Handle uncertainty loss based on mode (SSIM vs heteroscedastic)
+        if self.unc_loss is not None:
+            # SSIM-based uncertainty loss (baseline approach from replica_all8.yaml)
+            # This is a SEPARATE loss that trains ONLY the uncertainty MLP
+            # RGB L1 loss remains unchanged - uncertainty doesn't affect color loss
+            # Formula: Luncer = LSSIM / (2β²) + λ1 log β
+            # Gradients are stopped from SSIM to RGB to decouple training
+            
+            # Get training progress for SSIM annealing
+            train_frac = prog if hasattr(prog, 'item') else float(prog)
+            
+            # Compute SSIM-based uncertainty loss
+            L_unc, l_ssim_mean = self.unc_loss(rgb_pred, rgb_gt, sigma, mask=mask, train_frac=train_frac)
+            
+            # Add SSIM uncertainty loss as separate term (doesn't replace RGB L1)
             weight_unc = self.weight_unc_fn(prog)
             if self.use_uncertainty_annealing:
                 uncer_rate = 1.0 + bias_function(prog, self.uncertainty_anneal_param)
                 weight_unc = weight_unc * uncer_rate
             
-            # Replace rgb_l1 with heteroscedastic color loss
-            losses['rgb_l1'] = L_color  # Store heteroscedastic loss as rgb_l1 for logging
-            losses['heteroscedastic_color_loss'] = L_color  # Also store with explicit name
-            base_total = base_total + weight_unc * L_color
-        else:
-            # If rgb_l1 was not used, just add heteroscedastic loss
-            weight_unc = self.weight_unc_fn(prog)
-            if self.use_uncertainty_annealing:
-                uncer_rate = 1.0 + bias_function(prog, self.uncertainty_anneal_param)
-                weight_unc = weight_unc * uncer_rate
-            losses['heteroscedastic_color_loss'] = L_color
-            base_total = losses['total'] + weight_unc * L_color
+            losses['uncertainty_loss'] = L_unc
+            losses['ssim_uncertainty_loss'] = L_unc
+            losses['l_ssim_mean'] = l_ssim_mean
+            base_total = base_total + weight_unc * L_unc
+            
+            # SSIM mode doesn't use heteroscedastic regularizer (regularization is built into SSIM loss)
+            # But we can optionally add variance regularizer if enabled
+            if self.variance_reg is not None:
+                # Variance regularizer uses DINO features, not sigma directly
+                # This would need to be called from trainer if DINO features are available
+                pass
         
-        # Step 3: Add uncertainty regularizer: R(σ) = (1/N) * Σ_r (log σ - log σ_0)²
-        # Regularizer weight: β = unc_lambda_reg
-        L_reg = uncertainty_regularizer(sigma, sigma_0=self.sigma_0, mask=mask)
-        losses['uncertainty_regularizer'] = L_reg
-        base_total = base_total + self.unc_lambda_reg * L_reg
+        else:
+            # Heteroscedastic color loss (replaces RGB L1)
+            # Formula: L_color(r) = (1/(2σ²)) * ||C - Ĉ||² + (1/2) * log(σ²)
+            L_color = heteroscedastic_color_loss(rgb_pred, rgb_gt, sigma, mask=mask)
+            
+            # Get the original RGB L1 loss weight
+            lambda_rgb_l1 = self.base_loss.lambda_rgb_l1(prog)
+            
+            # Replace rgb_l1 in total loss
+            # Remove the original rgb_l1 contribution from total
+            if 'rgb_l1' in losses and lambda_rgb_l1 > 0:
+                # Subtract original rgb_l1 contribution
+                base_total = base_total - lambda_rgb_l1 * losses['rgb_l1']
+                # Add heteroscedastic color loss with same weight (λ_color = weight_unc)
+                weight_unc = self.weight_unc_fn(prog)
+                if self.use_uncertainty_annealing:
+                    uncer_rate = 1.0 + bias_function(prog, self.uncertainty_anneal_param)
+                    weight_unc = weight_unc * uncer_rate
+                
+                # Replace rgb_l1 with heteroscedastic color loss
+                losses['rgb_l1'] = L_color  # Store heteroscedastic loss as rgb_l1 for logging
+                losses['heteroscedastic_color_loss'] = L_color  # Also store with explicit name
+                base_total = base_total + weight_unc * L_color
+            else:
+                # If rgb_l1 was not used, just add heteroscedastic loss
+                weight_unc = self.weight_unc_fn(prog)
+                if self.use_uncertainty_annealing:
+                    uncer_rate = 1.0 + bias_function(prog, self.uncertainty_anneal_param)
+                    weight_unc = weight_unc * uncer_rate
+                losses['heteroscedastic_color_loss'] = L_color
+                base_total = base_total + weight_unc * L_color
+            
+            # Step 3: Add uncertainty regularizer: R(σ) = (1/N) * Σ_r (log σ - log σ_0)²
+            # Regularizer weight: β = unc_lambda_reg
+            L_reg = uncertainty_regularizer(sigma, sigma_0=self.sigma_0, mask=mask)
+            losses['uncertainty_regularizer'] = L_reg
+            base_total = base_total + self.unc_lambda_reg * L_reg
+            
+            # For backward compatibility, also store as uncertainty_loss
+            losses['uncertainty_loss'] = L_color  # Heteroscedastic color loss
         
         # Step 4: Update total loss
         losses['total'] = base_total
-        
-        # For backward compatibility, also store as uncertainty_loss
-        losses['uncertainty_loss'] = L_color  # Heteroscedastic color loss
         
         return losses

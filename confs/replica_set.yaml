@@ -229,23 +229,31 @@ loss:
   # Heteroscedastic Uncertainty Loss Configuration (ND-SDF Principles)
   # Uncertainty ONLY for color/photometric loss, NOT for SDF/eikonal/normal
   use_uncertainty: true  # Enable heteroscedastic uncertainty for color loss
-  use_ssim_uncertainty: false  # Use heteroscedastic formulation (default), set true for legacy SSIM-based
+  use_ssim_uncertainty: true  # Use SSIM-based uncertainty (baseline approach - separate loss, doesn't affect RGB L1)
   use_variance_regularizer: true  # Enable DINO patch variance regularization (optional)
   
-  # Heteroscedastic color loss weight: L = λ_sdf*L_SDF + λ_eik*L_eik + λ_normal*L_normal + λ_color*Σ_r L_color(r) + β*R(σ)
-  weight_unc: 1.0  # λ_color: Weight for heteroscedastic color loss (reduce to 0.5 if photometric overpowers geometry)
-  unc_lambda_reg: 0.05  # β: Weight for uncertainty regularizer R(σ) (increased from 0.03 to prevent σ inflation)
+  # SSIM-based uncertainty loss (baseline approach from replica_all8.yaml)
+  # This trains uncertainty MLP separately - RGB L1 loss remains unchanged
+  # Formula: Luncer = LSSIM / (2β²) + λ1 log β (where LSSIM detects structural differences)
+  weight_unc: 1.0  # Weight for SSIM uncertainty loss (separate from RGB L1)
+  unc_lambda_reg: 0.5  # β: Weight for uncertainty regularizer (matches baseline - stronger than 0.05)
   
-  # Log-variance initialization: s_0 = log σ_0
-  init_log_sigma: -3.0  # s_0 = -3 → σ_0 ≈ 0.05 (tune: -4, -3, -2; decrease by -0.5 if geometry degrades)
+  # Legacy parameters for SSIM mode (baseline used these)
+  unc_clip_min: 0.1  # Minimum uncertainty value for clipping (baseline: 0.1)
+  unc_eps: 1e-3  # Epsilon for numerical stability
   
-  # Sigma clamping: σ ∈ [σ_min, σ_max] to prevent extreme down-weighting
-  # CRITICAL FIX: Increased sigma_min from 1e-3 to 0.01 to prevent numerical overflow
-  # When sigma = 1e-3, sigma² = 1e-6, causing weighted_term = 500,000 * error² → NaN
-  # Removed sigma_max clamp (set to 100.0) to allow room0 to express higher uncertainty naturally
-  # Regularizer R(σ) = (log σ - log σ_0)² will prevent unbounded growth
-  sigma_min: 0.01  # Minimum σ value (increased from 1e-3 to prevent overflow)
-  sigma_max: 100.0  # Maximum σ value (effectively removes clamp - set very high to allow natural uncertainty range)
+  # SSIM uncertainty loss parameters (baseline approach)
+  ssim_window_size: 5  # Window size for SSIM computation (baseline: 5)
+  stop_ssim_gradient: true  # Stop gradient from SSIM to RGB (REQUIRED for decoupled training - baseline: true)
+  ssim_anneal: 0.8  # Annealing parameter for SSIM rate scaling (baseline: 0.8)
+  ssim_clip_max: 5.0  # Maximum value to clip scaled SSIM loss (baseline: 5.0)
+  
+  # Log-variance initialization: s_0 = log σ_0 (not used in SSIM mode, but kept for compatibility)
+  init_log_sigma: -3.0  # s_0 = -3 → σ_0 ≈ 0.05
+  
+  # Sigma clamping: σ ∈ [σ_min, σ_max] (not used in SSIM mode, but kept for compatibility)
+  sigma_min: 0.01  # Minimum σ value (not used in SSIM mode)
+  sigma_max: 100.0  # Maximum σ value (not used in SSIM mode)
   
   # Legacy parameters (kept for backward compatibility, not used in heteroscedastic mode)
   unc_clip_min: 0.1  # Legacy: minimum uncertainty value (replaced by sigma_min)
