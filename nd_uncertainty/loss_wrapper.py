@@ -75,6 +75,13 @@ class UncertaintyAwareLoss(nn.Module):
         self.sigma_min = getattr(conf.loss, 'sigma_min', 1e-3)
         self.sigma_max = getattr(conf.loss, 'sigma_max', 0.5)
         
+        # Print sigma clamping parameters at initialization
+        print(f"[UncertaintyAwareLoss] Initialized with sigma clamping:")
+        print(f"  - sigma_min: {self.sigma_min}")
+        print(f"  - sigma_max: {self.sigma_max}")
+        print(f"  - unc_lambda_reg (β): {self.unc_lambda_reg}")
+        print(f"  - sigma_0 (baseline): {self.sigma_0:.6f} (from init_log_sigma: {init_log_sigma})")
+        
         # Legacy SSIM-based uncertainty loss (kept for backward compatibility)
         # The new heteroscedastic formulation is the default
         use_ssim = getattr(conf.loss, 'use_ssim_uncertainty', False)  # Default False - use heteroscedastic instead

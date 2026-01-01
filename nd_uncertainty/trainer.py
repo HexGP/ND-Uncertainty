@@ -41,6 +41,13 @@ class UncertaintyTrainer(NDSDFTrainer):
             sigma_min = getattr(self.conf.loss, 'sigma_min', 1e-3)
             sigma_max = getattr(self.conf.loss, 'sigma_max', 0.5)
             
+            # Print uncertainty configuration at initialization
+            print(f"[UncertaintyTrainer] Initializing uncertainty pipeline with:")
+            print(f"  - sigma_min: {sigma_min}")
+            print(f"  - sigma_max: {sigma_max}")
+            print(f"  - init_log_sigma (s_0): {init_log_sigma} → sigma_0 ≈ {torch.exp(torch.tensor(init_log_sigma)).item():.6f}")
+            print(f"  - patch_size: {patch_size}, dilation: {dilation}")
+            
             # Create uncertainty pipeline (DINO → patches → σ(r))
             self.uncertainty_pipeline = UncertaintyPipeline(
                 patch_size=patch_size,

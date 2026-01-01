@@ -44,6 +44,7 @@ ENV/
 # Training outputs
 runs/
 runs_set/
+runs_set1/
 runs_new/
 <<<<<<< HEAD
 runs_new1/
