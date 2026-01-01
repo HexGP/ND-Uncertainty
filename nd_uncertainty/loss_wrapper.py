@@ -240,12 +240,10 @@ class UncertaintyAwareLoss(nn.Module):
                                torch.tensor(self.sigma_max, device=sigma.device, dtype=sigma.dtype),
                                sigma)
         
-        # CRITICAL FIX: Clamp sigma to [sigma_min, sigma_max] to prevent extreme down-weighting
-        # Per ND-SDF principles (from implementation notes): σ ∈ [1e-3, 0.5] to prevent extreme down-weighting
-        # If sigma > sigma_max, the weighted_term = 0.5 * ||C-Ĉ||² / σ² becomes too small,
-        # making color loss negligible and preventing proper color learning → dark images + poor SDF → corrupted meshes
-        # NOTE: sigma_min (1e-3) is very small - can cause numerical issues when dividing by sigma²
-        # Consider increasing sigma_min to 0.01 or 0.05 for scan 3 if NaNs persist
+        # CRITICAL: Clamp sigma_min for numerical stability (prevents division by zero in 1/σ²)
+        # sigma_max is set very high (1000.0) - effectively no max clamp
+        # Regularizer R(σ) = (log σ - log σ_0)² will prevent unbounded growth instead of hard clamping
+        # This allows uncertainty to grow naturally for harder scenes while regularizer keeps it reasonable
         sigma = sigma.clamp(min=self.sigma_min, max=self.sigma_max)
         
         # Verify no NaN after clamping

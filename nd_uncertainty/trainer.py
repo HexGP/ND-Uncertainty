@@ -284,12 +284,33 @@ class UncertaintyTrainer(NDSDFTrainer):
         # Clip to sigma bounds first (per implementation notes: σ ∈ [1e-3, 0.5])
         sigma_min = getattr(self.conf.loss, 'sigma_min', 1e-3)
         sigma_max = getattr(self.conf.loss, 'sigma_max', 0.5)
+        
+        # Detect clamp saturation for debugging
+        pct_at_min = (beta_np <= sigma_min + 1e-5).sum() / beta_np.size * 100
+        pct_at_max = (beta_np >= sigma_max - 1e-5).sum() / beta_np.size * 100
+        
+        # Log warnings if most values are clamped
+        if pct_at_max > 50:
+            print(f"[WARNING Epoch {epoch}] {pct_at_max:.1f}% of sigma values at max clamp ({sigma_max}). "
+                  f"Uncertainty is saturated - all values are the same. This means uncertainty MLP "
+                  f"is predicting high uncertainty everywhere and hitting the clamp boundary.")
+        elif pct_at_min > 50:
+            print(f"[WARNING Epoch {epoch}] {pct_at_min:.1f}% of sigma values at min clamp ({sigma_min}). "
+                  f"Uncertainty is collapsed - all values are the same.")
+        
         beta_clipped = np.clip(beta_np, sigma_min, sigma_max)
         
         # Normalize using actual min/max for better contrast (not fixed bounds)
         beta_actual_min = beta_clipped.min()
         beta_actual_max = beta_clipped.max()
-        if beta_actual_max > beta_actual_min:
+        beta_range = beta_actual_max - beta_actual_min
+        
+        if beta_range < 0.01:  # Very small range - values are nearly uniform
+            print(f"[WARNING Epoch {epoch}] Sigma range is very small ({beta_range:.4f}). "
+                  f"Uncertainty visualization will appear uniform. Values: min={beta_actual_min:.4f}, max={beta_actual_max:.4f}")
+            # Use fixed bounds for visualization when range is too small
+            beta_norm = (beta_clipped - sigma_min) / (sigma_max - sigma_min + 1e-6)
+        elif beta_actual_max > beta_actual_min:
             # Use actual range for better visualization contrast
             beta_norm = (beta_clipped - beta_actual_min) / (beta_actual_max - beta_actual_min + 1e-6)
         else:
