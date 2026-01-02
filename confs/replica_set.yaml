@@ -263,10 +263,6 @@ loss:
   # Learning rate scaling for uncertainty MLP
   uncertainty_lr_scale: 0.1  # Reduce σ learning rate to 0.1x color LR to avoid quick inflation
   
-  # Legacy SSIM uncertainty loss parameters (only used if use_ssim_uncertainty: true)
-  ssim_window_size: 5  # Window size for SSIM computation
-  stop_ssim_gradient: true  # Stop gradient from SSIM to RGB (for decoupled training)
-  
   # Patch variance regularizer parameters (optional)
   variance_weight: 0.1  # Weight for variance regularization
   
