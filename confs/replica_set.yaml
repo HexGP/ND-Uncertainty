@@ -249,16 +249,12 @@ loss:
   sigma_max: 1000.0  # Maximum σ value (effectively no clamp - regularizer R(σ) prevents unbounded growth)
   
   # Legacy SSIM parameters (not used in heteroscedastic mode, but kept for compatibility)
-  unc_clip_min: 0.1  # Legacy: minimum uncertainty value (not used in heteroscedastic mode)
+  unc_clip_min: 0.1  # Legacy: minimum uncertainty value (not used in heteroscedastic mode, replaced by sigma_min)
   unc_eps: 1e-3  # Epsilon for numerical stability
   ssim_window_size: 5  # Window size for SSIM computation (not used)
   stop_ssim_gradient: true  # Stop gradient from SSIM to RGB (not used)
   ssim_anneal: 0.8  # Annealing parameter for SSIM rate scaling (not used)
   ssim_clip_max: 5.0  # Maximum value to clip scaled SSIM loss (not used)
-  
-  # Legacy parameters (kept for backward compatibility, not used in heteroscedastic mode)
-  unc_clip_min: 0.1  # Legacy: minimum uncertainty value (replaced by sigma_min)
-  unc_eps: 1e-3  # Epsilon for numerical stability
   
   # Curriculum learning: warmup stage
   # Train without uncertainty for first N_warm steps to help geometry find good initialization
