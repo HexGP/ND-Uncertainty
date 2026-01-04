@@ -218,12 +218,12 @@ loss:
   lambda_rgb_l1: 1.0
   lambda_rgb_mse: 0.0
   lambda_s3im: 0.0 # s3im loss
-  lambda_eik: 0.08 # λ_eik: Eikonal loss weight (Hybrid: using Run 3 value - good balance)
+  lambda_eik: 0.09 # λ_eik: Eikonal loss weight (Run 6: slightly increased from 0.08 to 0.09 to close Normal C. gap -2.78)
   lambda_smooth: 0.005 # smooth loss from monosdf
   lambda_normal: 0.0 # naive normal loss (not used, use lambda_ab_normal instead)
   lambda_depth: 0.0 # naive depth loss
   lambda_curvature: 5e-4 # curvature loss
-  lambda_ab_normal: 0.06 # λ_normal: Adaptive deflection angle normal loss (Hybrid: using Run 3 value - good balance)
+  lambda_ab_normal: 0.07 # λ_normal: Adaptive deflection angle normal loss (Run 6: slightly increased from 0.06 to 0.07 to close Normal C. gap -2.78)
   lambda_ab_depth: 0.04 # adaptive deflection angle depth loss
   
   # Heteroscedastic Uncertainty Loss Configuration (ND-SDF Principles)
@@ -236,16 +236,17 @@ loss:
   # Formula: L_hybrid = α * L_heteroscedastic + (1-α) * L_RGB_L1
   # where α = hybrid_weight
   # hybrid_weight = 1.0 → pure heteroscedastic (replaces RGB L1, Run 1-4 approach)
-  # hybrid_weight = 0.3 → 30% heteroscedastic, 70% standard RGB L1 (hybrid approach)
+  # hybrid_weight = 0.4 → 40% heteroscedastic, 60% standard RGB L1 (Run 6: increased from 0.3 to get more uncertainty benefit)
+  # hybrid_weight = 0.3 → 30% heteroscedastic, 70% standard RGB L1 (Run 5: hybrid approach)
   # hybrid_weight = 0.0 → pure standard RGB L1 (no uncertainty)
-  hybrid_weight: 0.3  # α: Blend weight for hybrid approach (0.3 = 30% heteroscedastic, 70% standard RGB L1)
+  hybrid_weight: 0.4  # α: Blend weight for hybrid approach (Run 6: 40% heteroscedastic, 60% standard RGB L1 - increased to get more uncertainty benefit while maintaining RGB L1 strength)
   
   # Heteroscedastic color loss: L_color(r) = (1/(2σ²)) * ||C - Ĉ||² + (1/2) * log(σ²)
   # Used in hybrid blend with standard RGB L1
   # High σ → down-weight color errors (less penalty for uncertain regions)
   # Low σ → emphasize color errors (more penalty for certain regions)
   weight_unc: 1.0  # λ_color: Weight for heteroscedastic color loss (used in hybrid blend, not as replacement)
-  unc_lambda_reg: 0.15  # β: Weight for uncertainty regularizer (reduced from 0.2 since hybrid approach is more stable)
+  unc_lambda_reg: 0.18  # β: Weight for uncertainty regularizer (Run 6: increased from 0.15 to 0.18 to maintain stability with higher hybrid_weight)
   
   # Log-variance initialization: s_0 = log σ_0
   init_log_sigma: -4.0  # s_0 = -4.0 → σ_0 ≈ 0.018 (Run 4: kept at -4.0 - working well)

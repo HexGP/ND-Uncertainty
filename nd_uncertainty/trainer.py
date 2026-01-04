@@ -300,22 +300,40 @@ class UncertaintyTrainer(NDSDFTrainer):
         
         beta_clipped = np.clip(beta_np, sigma_min, sigma_max)
         
-        # Normalize using actual min/max for better contrast (not fixed bounds)
-        beta_actual_min = beta_clipped.min()
-        beta_actual_max = beta_clipped.max()
-        beta_range = beta_actual_max - beta_actual_min
+        # Use percentile-based normalization to show variation even when values are saturated
+        # This handles cases where most values are similar (e.g., all high at epoch 2400)
+        # Percentile-based normalization shows relative differences better than min/max
+        beta_flat = beta_clipped.flatten()
+        p5 = np.percentile(beta_flat, 5)   # 5th percentile
+        p95 = np.percentile(beta_flat, 95) # 95th percentile
+        p50 = np.percentile(beta_flat, 50) # median
         
-        if beta_range < 0.01:  # Very small range - values are nearly uniform
-            print(f"[WARNING Epoch {epoch}] Sigma range is very small ({beta_range:.4f}). "
-                  f"Uncertainty visualization will appear uniform. Values: min={beta_actual_min:.4f}, max={beta_actual_max:.4f}")
-            # Use fixed bounds for visualization when range is too small
-            beta_norm = (beta_clipped - sigma_min) / (sigma_max - sigma_min + 1e-6)
-        elif beta_actual_max > beta_actual_min:
-            # Use actual range for better visualization contrast
-            beta_norm = (beta_clipped - beta_actual_min) / (beta_actual_max - beta_actual_min + 1e-6)
+        # If range is very small, use percentile range for normalization
+        if p95 - p5 < 0.01:
+            # Values are very uniform - use wider percentile range or fallback to min/max
+            beta_actual_min = beta_clipped.min()
+            beta_actual_max = beta_clipped.max()
+            beta_range = beta_actual_max - beta_actual_min
+            
+            if beta_range < 0.01:
+                print(f"[WARNING Epoch {epoch}] Sigma values are nearly uniform. "
+                      f"Range: {beta_range:.4f}, Min: {beta_actual_min:.4f}, Max: {beta_actual_max:.4f}, "
+                      f"Median: {p50:.4f}. Using percentile-based normalization to show subtle variation.")
+                # Use wider percentile range (1st to 99th) to capture any variation
+                p1 = np.percentile(beta_flat, 1)
+                p99 = np.percentile(beta_flat, 99)
+                if p99 - p1 > 1e-6:
+                    beta_norm = np.clip((beta_clipped - p1) / (p99 - p1 + 1e-6), 0, 1)
+                else:
+                    # Truly uniform - show as middle value
+                    beta_norm = np.ones_like(beta_clipped) * 0.5
+            else:
+                # Use actual min/max
+                beta_norm = (beta_clipped - beta_actual_min) / (beta_actual_max - beta_actual_min + 1e-6)
         else:
-            # All values are the same, show as uniform middle value
-            beta_norm = np.ones_like(beta_clipped) * 0.5
+            # Use percentile-based normalization (5th to 95th percentile) for robust visualization
+            # This handles outliers and shows variation in the main distribution
+            beta_norm = np.clip((beta_clipped - p5) / (p95 - p5 + 1e-6), 0, 1)
         
         # Apply turbo colormap
         turbo_cmap = cm.get_cmap('turbo')

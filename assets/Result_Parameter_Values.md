@@ -11,6 +11,8 @@ This document tracks the parameter values for different experimental runs testin
 | Run 2 | 83.23 | 8.99 | 45.59 | Improved - fixes applied |
 | Run 3 | 86.17 | 5.88 | 64.63 | Good - significant improvement |
 | Run 4 | 86.82 | 6.01 | 66.63 | Marginal improvement - diminishing returns |
+| Run 5: Hybrid | 88.75 | 3.71 | 78.87 | Excellent - hybrid approach breakthrough |
+| Run 6: Tuned Hybrid | TBD | TBD | TBD | In progress - increased hybrid_weight to 0.4 |
 
 ---
 
@@ -171,16 +173,17 @@ This document tracks the parameter values for different experimental runs testin
 
 ## Parameter Comparison Table
 
-| Parameter | Run 1 | Run 2 | Run 3 | Run 4 | Baseline (SSIM) |
-|-----------|-------|-------|-------|-------|-----------------|
-| `weight_unc` | 1.0 | 1.0 | **0.5** | **0.3** | 1.0 |
-| `unc_lambda_reg` | 0.05 | 0.1 | **0.15** | **0.2** | 0.5 |
-| `init_log_sigma` | -3.0 | -3.5 | **-4.0** | **-4.0** | N/A |
-| `sigma_min` | 0.01 | 0.01 | 0.01 | 0.01 | 0.1 |
-| `sigma_max` | 0.5 | 1000.0 | 1000.0 | 1000.0 | N/A |
-| `lambda_eik` | 0.05 | 0.05 | **0.08** | **0.1** | 0.05 |
-| `lambda_ab_normal` | 0.04 | 0.04 | **0.06** | **0.08** | 0.04 |
-| `use_ssim_uncertainty` | false | false | false | false | true |
+| Parameter | Run 1 | Run 2 | Run 3 | Run 4 | Run 5: Hybrid | Baseline (SSIM) |
+|-----------|-------|-------|-------|-------|---------------|-----------------|
+| `hybrid_weight` | N/A | N/A | N/A | N/A | **0.3** | N/A |
+| `weight_unc` | 1.0 | 1.0 | **0.5** | **0.3** | 1.0 | 1.0 |
+| `unc_lambda_reg` | 0.05 | 0.1 | **0.15** | **0.2** | **0.15** | 0.5 |
+| `init_log_sigma` | -3.0 | -3.5 | **-4.0** | **-4.0** | **-4.0** | N/A |
+| `sigma_min` | 0.01 | 0.01 | 0.01 | 0.01 | 0.01 | 0.1 |
+| `sigma_max` | 0.5 | 1000.0 | 1000.0 | 1000.0 | 1000.0 | N/A |
+| `lambda_eik` | 0.05 | 0.05 | **0.08** | **0.1** | **0.08** | 0.05 |
+| `lambda_ab_normal` | 0.04 | 0.04 | **0.06** | **0.08** | **0.06** | 0.04 |
+| `use_ssim_uncertainty` | false | false | false | false | false | true |
 
 ---
 
@@ -200,3 +203,100 @@ This document tracks the parameter values for different experimental runs testin
 - **Progress:** Run 1 → Run 2 → Run 3 shows consistent improvement across all metrics
 - **Run 4 Focus:** Prioritize color learning (F-score) while maintaining geometry improvements
 - **Run 4 Outcome:** Marginal improvements with diminishing returns. Trade-off observed: F-score improved but Chamfer got slightly worse. Heteroscedastic approach may be reaching its limit.
+
+---
+
+## Run 5: Hybrid Approach (Breakthrough)
+
+**Results:** Normal C. 88.75, Chamfer 3.71, F-score 78.87
+
+**Breakthrough:** Hybrid approach (30% heteroscedastic + 70% standard RGB L1) achieved significant improvements across all metrics, getting much closer to baseline.
+
+### Uncertainty Parameters
+- `use_uncertainty: true`
+- `use_ssim_uncertainty: false` (heteroscedastic mode)
+- `hybrid_weight: 0.3` (**NEW**: 30% heteroscedastic, 70% standard RGB L1 blend)
+- `weight_unc: 1.0` (λ_color: weight for heteroscedastic component in blend)
+- `unc_lambda_reg: 0.15` (β: regularization weight, reduced from 0.2 since hybrid is more stable)
+- `init_log_sigma: -4.0` (s₀: σ₀ ≈ 0.018, kept from Run 3/4)
+- `sigma_min: 0.01` (minimum σ clamp for numerical stability)
+- `sigma_max: 1000.0` (effectively no max clamp, regularizer prevents unbounded growth)
+- `uncertainty_warmup_steps: 5000`
+- `uncertainty_lr_scale: 0.1`
+
+### Geometry Parameters
+- `lambda_eik: 0.08` (eikonal loss weight - using Run 3 value, good balance)
+- `lambda_ab_normal: 0.06` (adaptive normal loss weight - using Run 3 value, good balance)
+- `lambda_rgb_l1: 1.0` (used in hybrid blend, not replaced)
+
+### Rationale
+1. **Hybrid approach (0.3 blend)** - Mixes heteroscedastic uncertainty (30%) with standard RGB L1 (70%)
+   - Maintains strong color learning from standard RGB L1 (70% weight)
+   - Adds uncertainty awareness without fully replacing color learning (30% weight)
+   - Better balance than pure heteroscedastic replacement
+2. **Reduced regularization (0.15)** - Hybrid approach is more stable, less aggressive regularization needed
+3. **Geometry constraints (Run 3 values)** - Good balance from Run 3, no need to over-constrain
+
+### Actual Results
+- **Normal C.: 88.75** (+1.93 from Run 4, -2.78 from baseline) - **Significant improvement**, very close to baseline
+- **Chamfer: 3.71** (-2.30 from Run 4, +0.90 from baseline) - **Major improvement**, almost matches baseline
+- **F-score: 78.87** (+12.24 from Run 4, -11.22 from baseline) - **Breakthrough improvement**, much closer to baseline
+
+### Key Successes
+- **Hybrid approach works!** - Mixing heteroscedastic with standard RGB L1 achieves much better balance
+- **All metrics improved significantly** - No trade-offs, consistent improvement across Normal C., Chamfer, and F-score
+- **Much closer to baseline** - Normal C. gap: -2.78 (vs -4.71 in Run 4), Chamfer gap: +0.90 (vs +3.20 in Run 4), F-score gap: -11.22 (vs -23.46 in Run 4)
+- **Best results so far** - Hybrid approach proves to be the right direction
+
+### Visualization Issue
+- **Uncertainty images appear uniform (purple/blue) at epoch 2400** - Uncertainty values have converged to similar high values, causing uniform visualization
+- **Variation visible at epoch 720** - Earlier in training, uncertainty values had more variation
+- **Fix needed**: Use percentile-based normalization instead of min/max to show variation even when values are saturated
+
+---
+
+## Run 6: Tuned Hybrid Approach (Target: Exceed Baseline)
+
+**Goal:** Close remaining gaps to baseline (Normal C. -2.78, Chamfer +0.90, F-score -11.22) by fine-tuning hybrid approach.
+
+**Strategy:** 
+1. **Increase hybrid_weight (0.3 → 0.4)** - Get more uncertainty benefit (40% heteroscedastic, 60% RGB L1) while maintaining strong color learning
+2. **Strengthen regularization (0.15 → 0.18)** - Maintain stability with higher hybrid_weight
+3. **Slightly strengthen geometry (eik: 0.08→0.09, normal: 0.06→0.07)** - Close Normal C. gap (-2.78)
+
+### Uncertainty Parameters
+- `use_uncertainty: true`
+- `use_ssim_uncertainty: false` (heteroscedastic mode)
+- `hybrid_weight: 0.4` (**INCREASED from 0.3** - 40% heteroscedastic, 60% standard RGB L1)
+- `weight_unc: 1.0` (λ_color: weight for heteroscedastic component in blend)
+- `unc_lambda_reg: 0.18` (**INCREASED from 0.15** - stronger regularization to maintain stability)
+- `init_log_sigma: -4.0` (s₀: σ₀ ≈ 0.018, kept from Run 5)
+- `sigma_min: 0.01` (minimum σ clamp for numerical stability)
+- `sigma_max: 1000.0` (effectively no max clamp, regularizer prevents unbounded growth)
+- `uncertainty_warmup_steps: 5000`
+- `uncertainty_lr_scale: 0.1`
+
+### Geometry Parameters
+- `lambda_eik: 0.09` (**INCREASED from 0.08** - slightly stronger geometry constraint to close Normal C. gap)
+- `lambda_ab_normal: 0.07` (**INCREASED from 0.06** - slightly stronger normal constraint)
+- `lambda_rgb_l1: 1.0` (used in hybrid blend, not replaced)
+
+### Rationale
+1. **Increased hybrid_weight (0.4)** - More uncertainty benefit (40% vs 30%) while keeping 60% standard RGB L1 for strong color learning
+   - Should help F-score (color quality) by better uncertainty-aware learning
+   - Still maintains majority RGB L1 (60%) to prevent color degradation
+2. **Stronger regularization (0.18)** - With higher hybrid_weight, need slightly more regularization to prevent uncertainty inflation
+3. **Slightly stronger geometry (0.09, 0.07)** - Small increases to close Normal C. gap (-2.78) without over-constraining
+
+### Expected Results
+- **Target Normal C.:** > 90.0 (close -2.78 gap)
+- **Target Chamfer:** < 3.0 (close +0.90 gap)
+- **Target F-score:** > 85.0 (close -11.22 gap, primary focus)
+
+### Key Hypothesis
+- **More uncertainty benefit (40% vs 30%)** will improve F-score by better handling uncertain regions
+- **Maintained RGB L1 strength (60%)** will prevent color degradation
+- **Slightly stronger geometry** will close Normal C. gap
+- **Stronger regularization** will maintain stability
+
+---
