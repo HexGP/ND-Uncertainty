@@ -149,7 +149,9 @@ class Trainer():
             'ssim_weight', 'ssim_anneal', 'ssim_clip_max', 'ssim_window_size', 'stop_ssim_gradient',
             'variance_weight', 'use_uncertainty_annealing', 'uncertainty_anneal_param', 'weight_unc_sched',
             # New heteroscedastic uncertainty parameters
-            'init_log_sigma', 'sigma_min', 'sigma_max', 'uncertainty_warmup_steps', 'uncertainty_lr_scale'
+            'init_log_sigma', 'sigma_min', 'sigma_max', 'uncertainty_warmup_steps', 'uncertainty_lr_scale',
+            # Hybrid approach parameter
+            'hybrid_weight'
         ]
         for param in uncertainty_params:
             loss_conf.pop(param, None)  # Remove if exists, ignore if doesn't
