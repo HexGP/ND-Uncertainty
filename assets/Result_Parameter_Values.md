@@ -10,7 +10,7 @@ This document tracks the parameter values for different experimental runs testin
 | Run 1 | 80.04 | 14.85 | 25.28 | Poor - uncertainty collapsed |
 | Run 2 | 83.23 | 8.99 | 45.59 | Improved - fixes applied |
 | Run 3 | 86.17 | 5.88 | 64.63 | Good - significant improvement |
-| Run 4 | TBD | TBD | TBD | TBD |
+| Run 4 | 86.82 | 6.01 | 66.63 | Marginal improvement - diminishing returns |
 
 ---
 
@@ -122,9 +122,11 @@ This document tracks the parameter values for different experimental runs testin
 
 ## Run 4 (Prioritize Color Learning + Strengthen Geometry)
 
+**Results:** Normal C. 86.82, Chamfer 6.01, F-score 66.63
+
 **Goal:** Further improve color/rendering quality (F-score gap: -25.46) while maintaining geometry improvements.
 
-**Results:** TBD
+**Outcome:** Marginal improvements - diminishing returns observed.
 
 ### Uncertainty Parameters
 - `use_uncertainty: true`
@@ -148,11 +150,22 @@ This document tracks the parameter values for different experimental runs testin
 3. **Kept initial uncertainty (-4.0)** - Working well in Run 3, no need to change.
 4. **Further strengthened geometry constraints** - Normal C. gap is -5.36, Chamfer gap is +3.07. Stronger eikonal (0.1) and normal (0.08) constraints should help close these gaps.
 
-### Expected Improvements
-- Better color/rendering quality (F-score should improve significantly with weight_unc: 0.3)
-- Better geometry quality (Normal C. and Chamfer should improve with stronger constraints)
-- Stable uncertainty values (stronger regularization maintains stability)
-- Closer to baseline performance across all metrics
+### Actual Results
+- **Normal C.: 86.82** (+0.65 from Run 3, -4.71 from baseline) - Small improvement, still below baseline
+- **Chamfer: 6.01** (+0.13 from Run 3, +3.20 from baseline) - **Slightly worse** than Run 3, geometry slightly degraded
+- **F-score: 66.63** (+2.00 from Run 3, -23.46 from baseline) - Small improvement, F-score gap still large
+
+### Analysis
+**Diminishing Returns:** Run 4 shows much smaller improvements compared to Run 2→Run 3:
+- Run 2→Run 3: Normal C. +2.94, Chamfer -3.11, F-score +19.04 (large improvements)
+- Run 3→Run 4: Normal C. +0.65, Chamfer +0.13, F-score +2.00 (marginal improvements)
+
+**Trade-off Observed:**
+- **F-score improved** (+2.00) - Lower `weight_unc: 0.3` helped color learning
+- **Chamfer got worse** (+0.13) - Stronger geometry constraints (`lambda_eik: 0.1`, `lambda_ab_normal: 0.08`) may have over-constrained, or uncertainty reduction affected geometry learning
+- **Normal C. improved slightly** (+0.65) - Geometry quality maintained but not significantly improved
+
+**Key Insight:** Further reducing `weight_unc` to 0.3 helped F-score but may have hurt geometry (Chamfer). The heteroscedastic approach may be reaching its limit - uncertainty affecting color directly creates a fundamental trade-off between color and geometry quality.
 
 ---
 
@@ -186,3 +199,4 @@ This document tracks the parameter values for different experimental runs testin
 - All runs use `uncertainty_warmup_steps: 5000` to let geometry initialize before uncertainty kicks in
 - **Progress:** Run 1 → Run 2 → Run 3 shows consistent improvement across all metrics
 - **Run 4 Focus:** Prioritize color learning (F-score) while maintaining geometry improvements
+- **Run 4 Outcome:** Marginal improvements with diminishing returns. Trade-off observed: F-score improved but Chamfer got slightly worse. Heteroscedastic approach may be reaching its limit.

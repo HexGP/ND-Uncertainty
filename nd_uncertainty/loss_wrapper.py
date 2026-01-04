@@ -44,7 +44,9 @@ class UncertaintyAwareLoss(nn.Module):
             'ssim_window_size', 'stop_ssim_gradient', 'ssim_anneal', 'ssim_clip_max',
             'variance_weight', 'use_uncertainty_annealing', 'uncertainty_anneal_param', 'weight_unc_sched',
             # New heteroscedastic uncertainty parameters
-            'init_log_sigma', 'sigma_min', 'sigma_max', 'uncertainty_warmup_steps', 'uncertainty_lr_scale'
+            'init_log_sigma', 'sigma_min', 'sigma_max', 'uncertainty_warmup_steps', 'uncertainty_lr_scale',
+            # Hybrid approach parameter
+            'hybrid_weight'
         ]
         for param in uncertainty_params:
             loss_conf.pop(param, None)  # Remove if exists, ignore if doesn't
@@ -124,9 +126,15 @@ class UncertaintyAwareLoss(nn.Module):
             self.variance_reg = None
         
         # Weight for heteroscedastic color loss (λ_color in formula)
-        # This replaces lambda_rgb_l1 when uncertainty is enabled
+        # This replaces lambda_rgb_l1 when uncertainty is enabled (unless hybrid mode is used)
         # Default: λ_color = 1.0 (per ND-SDF hyperparameters)
         self.weight_unc = getattr(conf.loss, 'weight_unc', 1.0)
+        
+        # Hybrid approach: blend heteroscedastic + standard RGB L1
+        # hybrid_weight = 0.0 → pure standard RGB L1 (no uncertainty)
+        # hybrid_weight = 1.0 → pure heteroscedastic (replaces RGB L1, current approach)
+        # hybrid_weight = 0.3 → 30% heteroscedastic, 70% standard RGB L1
+        self.hybrid_weight = getattr(conf.loss, 'hybrid_weight', 1.0)  # Default 1.0 = pure heteroscedastic (backward compatible)
         
         # Store sigma clamping parameters for potential use
         self.sigma_min = getattr(conf.loss, 'sigma_min', 1e-3)
@@ -307,36 +315,44 @@ class UncertaintyAwareLoss(nn.Module):
                 pass
         
         else:
-            # Heteroscedastic color loss (replaces RGB L1)
+            # Heteroscedastic color loss
             # Formula: L_color(r) = (1/(2σ²)) * ||C - Ĉ||² + (1/2) * log(σ²)
-            L_color = heteroscedastic_color_loss(rgb_pred, rgb_gt, sigma, mask=mask)
+            L_heteroscedastic = heteroscedastic_color_loss(rgb_pred, rgb_gt, sigma, mask=mask)
             
             # Get the original RGB L1 loss weight
             lambda_rgb_l1 = self.base_loss.lambda_rgb_l1(prog)
             
-            # Replace rgb_l1 in total loss
-            # Remove the original rgb_l1 contribution from total
+            # Hybrid approach: blend heteroscedastic + standard RGB L1
+            # hybrid_weight = 1.0 → pure heteroscedastic (replaces RGB L1, original approach)
+            # hybrid_weight = 0.3 → 30% heteroscedastic, 70% standard RGB L1 (hybrid approach)
+            # hybrid_weight = 0.0 → pure standard RGB L1 (no uncertainty)
+            hybrid_weight = self.hybrid_weight
+            
             if 'rgb_l1' in losses and lambda_rgb_l1 > 0:
-                # Subtract original rgb_l1 contribution
-                base_total = base_total - lambda_rgb_l1 * losses['rgb_l1']
-                # Add heteroscedastic color loss with same weight (λ_color = weight_unc)
-                weight_unc = self.weight_unc_fn(prog)
-                if self.use_uncertainty_annealing:
-                    uncer_rate = 1.0 + bias_function(prog, self.uncertainty_anneal_param)
-                    weight_unc = weight_unc * uncer_rate
+                # Get standard RGB L1 loss
+                L_rgb_l1 = losses['rgb_l1']
                 
-                # Replace rgb_l1 with heteroscedastic color loss
-                losses['rgb_l1'] = L_color  # Store heteroscedastic loss as rgb_l1 for logging
-                losses['heteroscedastic_color_loss'] = L_color  # Also store with explicit name
-                base_total = base_total + weight_unc * L_color
+                # Hybrid blend: L_hybrid = α * L_heteroscedastic + (1-α) * L_RGB_L1
+                # where α = hybrid_weight
+                L_hybrid = hybrid_weight * L_heteroscedastic + (1.0 - hybrid_weight) * L_rgb_l1
+                
+                # Replace rgb_l1 contribution in total loss
+                base_total = base_total - lambda_rgb_l1 * L_rgb_l1  # Remove original RGB L1
+                base_total = base_total + lambda_rgb_l1 * L_hybrid  # Add hybrid loss
+                
+                # Store both losses for logging
+                losses['rgb_l1'] = L_hybrid  # Store hybrid as rgb_l1 for logging
+                losses['heteroscedastic_color_loss'] = L_heteroscedastic
+                losses['rgb_l1_standard'] = L_rgb_l1  # Store original RGB L1 for reference
+                losses['hybrid_color_loss'] = L_hybrid  # Store hybrid explicitly
             else:
-                # If rgb_l1 was not used, just add heteroscedastic loss
+                # If rgb_l1 was not used, just use heteroscedastic (fallback)
                 weight_unc = self.weight_unc_fn(prog)
                 if self.use_uncertainty_annealing:
                     uncer_rate = 1.0 + bias_function(prog, self.uncertainty_anneal_param)
                     weight_unc = weight_unc * uncer_rate
-                losses['heteroscedastic_color_loss'] = L_color
-                base_total = base_total + weight_unc * L_color
+                losses['heteroscedastic_color_loss'] = L_heteroscedastic
+                base_total = base_total + weight_unc * L_heteroscedastic
             
             # Step 3: Add uncertainty regularizer: R(σ) = (1/N) * Σ_r (log σ - log σ_0)²
             # Regularizer weight: β = unc_lambda_reg
@@ -345,7 +361,7 @@ class UncertaintyAwareLoss(nn.Module):
             base_total = base_total + self.unc_lambda_reg * L_reg
             
             # For backward compatibility, also store as uncertainty_loss
-            losses['uncertainty_loss'] = L_color  # Heteroscedastic color loss
+            losses['uncertainty_loss'] = L_heteroscedastic  # Heteroscedastic color loss
         
         # Step 4: Update total loss
         losses['total'] = base_total
