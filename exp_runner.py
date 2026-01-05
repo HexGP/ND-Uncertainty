@@ -111,8 +111,8 @@ class Trainer():
         
         # Use DistributedSampler only if distributed training is initialized
         if dist.is_initialized():
-            self.train_sampler = torch.utils.data.distributed.DistributedSampler(self.train_dataset, shuffle=True)
-            self.valid_sampler = torch.utils.data.distributed.DistributedSampler(self.valid_dataset, shuffle=False)
+        self.train_sampler = torch.utils.data.distributed.DistributedSampler(self.train_dataset, shuffle=True)
+        self.valid_sampler = torch.utils.data.distributed.DistributedSampler(self.valid_dataset, shuffle=False)
         else:
             # Single GPU training - use regular sampler
             self.train_sampler = None  # None means no sampler (shuffle=True in DataLoader)
@@ -209,7 +209,7 @@ class Trainer():
 
         # init DDP only if distributed training is initialized
         if dist.is_initialized():
-            self.model = DDP(self.model, device_ids=[gpu], output_device=gpu, find_unused_parameters=True)
+        self.model = DDP(self.model, device_ids=[gpu], output_device=gpu, find_unused_parameters=True)
         # Otherwise, model stays as-is (single GPU training)
 
         # tensorboard
@@ -308,11 +308,11 @@ class Trainer():
                 d= {'rgb': output['rgb'].detach(), 'depth': output['depth'].detach(), 'normal': output['normal'].detach()}
                 if self.conf.model.nbfield.enabled and self.conf.dataset.use_mono_normal:
                     if 'quat' in output:
-                        d['quat'] = output['quat'].detach()
+                    d['quat'] = output['quat'].detach()
                     if 'biased_normal' in output:
-                        d['biased_normal'] = output['biased_normal'].detach()
+                    d['biased_normal'] = output['biased_normal'].detach()
                     if 'biased_mono_normal' in output:
-                        d['biased_mono_normal'] = output['biased_mono_normal'].detach()
+                    d['biased_mono_normal'] = output['biased_mono_normal'].detach()
                 # Extract uncertainty (beta/sigma) for visualization if available
                 # Beta should be in original sample (before split), need to extract corresponding chunk
                 if 'beta' in sample:
