@@ -261,17 +261,17 @@ class UncertaintyAwareLoss(nn.Module):
                                torch.tensor(self.sigma_max, device=sigma.device, dtype=sigma.dtype),
                                sigma)
         
-        # Get mask (foreground + not outside)
+        # Get mask for uncertainty loss
+        # CRITICAL: Use same mask as base_loss RGB L1 loss to ensure consistency
+        # base_loss uses mask=(~outside) for RGB L1 (line 450 in models/loss.py)
+        # We should use the same mask for heteroscedastic_color_loss
         outside = output.get('outside', None)  # (B, R, 1)
         foreground_mask = sample.get('mask', None)  # (B, R, 1)
         
-        # Combine masks: foreground AND not outside
-        if outside is not None and foreground_mask is not None:
-            mask = (~outside) & foreground_mask  # (B, R, 1)
-        elif outside is not None:
-            mask = ~outside  # (B, R, 1)
-        elif foreground_mask is not None:
-            mask = foreground_mask  # (B, R, 1)
+        # Use same mask as base_loss RGB L1: mask=(~outside)
+        # This ensures heteroscedastic_color_loss and rgb_l1_standard use identical masking
+        if outside is not None:
+            mask = ~outside  # (B, R, 1) - same as base_loss RGB L1 mask
         else:
             mask = None
         
