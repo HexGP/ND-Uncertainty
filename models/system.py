@@ -434,6 +434,10 @@ class ImplicitReconSystem(torch.nn.Module):
         normal = accumulate_along_rays(weights, ray_indices=ray_indices, values=gradient_normalized, n_rays=B*R).reshape(B, R, 3)
         dist = accumulate_along_rays(weights, ray_indices=ray_indices, values=t_mid, n_rays=B*R).reshape(B, R, 1)
         rays_fg = opacity > 0.1  # scene_aabb内的前景点。
+        # CRITICAL: Diagnostic check - log if rays_fg is all False (can cause eikonal loss to be zero)
+        if rays_fg.sum() == 0 and self.training:
+            print(f"[WARNING] rays_fg is all False! opacity range: [{opacity.min().item():.4f}, {opacity.max().item():.4f}], "
+                  f"mean: {opacity.mean().item():.4f}. This will cause gradient_eik to be empty.")
         depth = dist * depth_scale
         normal = torch.nn.functional.normalize(normal, p=2, dim=-1)
         output['normal_w'] = normal # scene normal in world space
@@ -527,19 +531,34 @@ class ImplicitReconSystem(torch.nn.Module):
                 _, _, gradient_eik_neighbor, _ = self.sdf.get_all(points_eik_neighbor, only_sdf=True, if_cal_hessian_x=False)
 
                 # FIXME：对所有点做eik(+uniform点)和hessian。
-                # output['gradient_eik'] = gradient_eik
-                output['gradient_eik'] = torch.cat([gradient[mask_fg], gradient_eik[:,:,1:,:].reshape(-1,3)], dim=0)
+                # CRITICAL: If mask_fg is all False, use all gradients as fallback
+                if mask_fg.sum() == 0:
+                    # No foreground rays - use all sampled gradients as fallback
+                    print(f"[WARNING] rays_fg is all False (no foreground rays). Using all gradients for gradient_eik as fallback.")
+                    output['gradient_eik'] = torch.cat([gradient, gradient_eik[:,:,1:,:].reshape(-1,3)], dim=0)
+                    output['hessian'] = hessian[rand_idx_near]  # Use all hessian, not just foreground
+                else:
+                    output['gradient_eik'] = torch.cat([gradient[mask_fg], gradient_eik[:,:,1:,:].reshape(-1,3)], dim=0)
+                    output['hessian'] = hessian[mask_fg][rand_idx_near] # (B,R,1,3)
                 output['gradient_smooth'] = gradient_eik # (B,R,2,3)
                 output['gradient_smooth_neighbor'] = gradient_eik_neighbor
-                # output['hessian'] = hessian[mask_fg]
-                output['hessian'] = hessian[mask_fg][rand_idx_near] # (B,R,1,3)
             else:
                 # using rays_fg to filter points
                 mask_fg = rays_fg.reshape(-1)[ray_indices]
-                output['gradient_eik'] = gradient[mask_fg] # (N_fg,3)
-                output['gradient_smooth'] = None
-                output['gradient_smooth_neighbor'] = None
-                output['hessian'] = hessian[mask_fg]
+                # CRITICAL: If mask_fg is all False (no foreground rays), use all points as fallback
+                # This prevents gradient_eik from being empty, which causes eikonal loss to be zero
+                if mask_fg.sum() == 0:
+                    # No foreground rays - use all sampled points as fallback
+                    print(f"[WARNING] rays_fg is all False (no foreground rays). Using all points for gradient_eik as fallback.")
+                    output['gradient_eik'] = gradient  # Use all gradients, not just foreground
+                    output['gradient_smooth'] = None
+                    output['gradient_smooth_neighbor'] = None
+                    output['hessian'] = hessian
+                else:
+                    output['gradient_eik'] = gradient[mask_fg] # (N_fg,3)
+                    output['gradient_smooth'] = None
+                    output['gradient_smooth_neighbor'] = None
+                    output['hessian'] = hessian[mask_fg]
 
                 # output['gradient_eik'] = gradient
                 # output['gradient_smooth'] = None

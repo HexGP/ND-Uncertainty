@@ -100,6 +100,16 @@ def eikonal_loss(gradients, mask=None):
     # eikonal-loss规范sdf
     # gradients: (B,R,N_eik,3), mask:(B,R,1)
     # 一般gradient:(...,3), mask:None
+    # CRITICAL: Handle empty gradients (can happen when mask_fg is all False)
+    if gradients is None:
+        # Return a small non-zero value to prevent complete loss collapse
+        device = mask.device if mask is not None else torch.device('cuda')
+        return torch.tensor(0.01, device=device)  # Small non-zero to maintain gradient flow
+    if gradients.numel() == 0:
+        # Empty tensor - use device from gradients
+        device = gradients.device if gradients is not None else (mask.device if mask is not None else torch.device('cuda'))
+        return torch.tensor(0.01, device=device)  # Small non-zero to maintain gradient flow
+    
     error = (gradients.norm(dim=-1, keepdim=False) - 1.0) ** 2 # [B,R,N_eik]
     error = error.nan_to_num(nan=0.0, posinf=0.0, neginf=0.0)
     if mask is not None:
@@ -108,6 +118,10 @@ def eikonal_loss(gradients, mask=None):
             return torch.tensor(0.0, device=mask.device)
         return (error * mask.float()).sum()/M/error.shape[-1]
     else:
+        # Handle empty error tensor (can happen if gradients was empty but passed check)
+        if error.numel() == 0:
+            device = gradients.device if gradients is not None else torch.device('cuda')
+            return torch.tensor(0.01, device=device)
         return error.mean()
 
 
@@ -442,7 +456,18 @@ class ImplicitReconLoss(nn.Module):
         # Accumulate loss
         losses = {}
         # 1. eikonal_loss
-        loss_eik = eikonal_loss(output['gradient_eik'],mask=None) if output.get('gradient_eik', None) is not None else torch.tensor(0.0, device=mask.device)
+        # CRITICAL: Check if gradient_eik exists and is not empty
+        gradient_eik = output.get('gradient_eik', None)
+        if gradient_eik is not None and gradient_eik.numel() > 0:
+            loss_eik = eikonal_loss(gradient_eik, mask=None)
+        else:
+            # If gradient_eik is missing or empty, log warning and use small fallback
+            # This can happen when rays_fg is all False (no foreground rays)
+            if gradient_eik is not None and gradient_eik.numel() == 0:
+                # Empty tensor - likely because mask_fg was all False
+                print(f"[WARNING] gradient_eik is empty (shape: {gradient_eik.shape}). "
+                      f"This suggests rays_fg is all False. Using fallback eikonal loss.")
+            loss_eik = torch.tensor(0.01, device=mask.device)  # Small non-zero to maintain gradient flow
         losses['eik'] = loss_eik
         loss= self.lambda_eik(prog) * loss_eik
         # 2. l1 rgb
