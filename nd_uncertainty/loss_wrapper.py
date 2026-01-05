@@ -317,6 +317,13 @@ class UncertaintyAwareLoss(nn.Module):
         else:
             # Heteroscedastic color loss
             # Formula: L_color(r) = (1/(2σ²)) * ||C - Ĉ||² + (1/2) * log(σ²)
+            # DEBUG: Check mask before calling heteroscedastic_color_loss
+            if mask is not None and hasattr(self, '_debug_printed') and not self._debug_printed:
+                mask_sum = mask.float().sum().item()
+                mask_total = mask.numel()
+                print(f"[DEBUG] heteroscedastic_color_loss mask: {mask_sum}/{mask_total} rays are True "
+                      f"({100*mask_sum/mask_total:.1f}%), outside shape: {outside.shape if outside is not None else 'None'}")
+                self._debug_printed = True  # Only print once to avoid spam
             L_heteroscedastic = heteroscedastic_color_loss(rgb_pred, rgb_gt, sigma, mask=mask)
             
             # Get the original RGB L1 loss weight

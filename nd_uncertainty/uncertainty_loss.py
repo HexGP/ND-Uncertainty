@@ -258,9 +258,16 @@ def heteroscedastic_color_loss(rgb_pred, rgb_gt, sigma, mask=None):
             mask = mask.unsqueeze(-1)  # (B, R) -> (B, R, 1)
         loss_per_ray = loss_per_ray * mask.float()
         # Average over masked rays
-        if mask.float().sum() > 0:
-            loss = loss_per_ray.sum() / mask.float().sum()
+        mask_sum = mask.float().sum()
+        if mask_sum > 0:
+            loss = loss_per_ray.sum() / mask_sum
         else:
+            # DEBUG: Log when mask is all False
+            if not hasattr(heteroscedastic_color_loss, '_mask_warning_printed'):
+                print(f"[WARNING] heteroscedastic_color_loss mask is all False! "
+                      f"loss_per_ray range: [{loss_per_ray.min().item():.6f}, {loss_per_ray.max().item():.6f}], "
+                      f"mask shape: {mask.shape}, mask sum: {mask_sum.item()}")
+                heteroscedastic_color_loss._mask_warning_printed = True
             loss = torch.tensor(0.0, device=loss_per_ray.device)
     else:
         # Average over all rays
