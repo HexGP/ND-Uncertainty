@@ -111,8 +111,8 @@ class Trainer():
         
         # Use DistributedSampler only if distributed training is initialized
         if dist.is_initialized():
-        self.train_sampler = torch.utils.data.distributed.DistributedSampler(self.train_dataset, shuffle=True)
-        self.valid_sampler = torch.utils.data.distributed.DistributedSampler(self.valid_dataset, shuffle=False)
+            self.train_sampler = torch.utils.data.distributed.DistributedSampler(self.train_dataset, shuffle=True)
+            self.valid_sampler = torch.utils.data.distributed.DistributedSampler(self.valid_dataset, shuffle=False)
         else:
             # Single GPU training - use regular sampler
             self.train_sampler = None  # None means no sampler (shuffle=True in DataLoader)
@@ -209,7 +209,7 @@ class Trainer():
 
         # init DDP only if distributed training is initialized
         if dist.is_initialized():
-        self.model = DDP(self.model, device_ids=[gpu], output_device=gpu, find_unused_parameters=True)
+            self.model = DDP(self.model, device_ids=[gpu], output_device=gpu, find_unused_parameters=True)
         # Otherwise, model stays as-is (single GPU training)
 
         # tensorboard
@@ -308,11 +308,11 @@ class Trainer():
                 d= {'rgb': output['rgb'].detach(), 'depth': output['depth'].detach(), 'normal': output['normal'].detach()}
                 if self.conf.model.nbfield.enabled and self.conf.dataset.use_mono_normal:
                     if 'quat' in output:
-                    d['quat'] = output['quat'].detach()
+                        d['quat'] = output['quat'].detach()
                     if 'biased_normal' in output:
-                    d['biased_normal'] = output['biased_normal'].detach()
+                        d['biased_normal'] = output['biased_normal'].detach()
                     if 'biased_mono_normal' in output:
-                    d['biased_mono_normal'] = output['biased_mono_normal'].detach()
+                        d['biased_mono_normal'] = output['biased_mono_normal'].detach()
                 # Extract uncertainty (beta/sigma) for visualization if available
                 # Beta should be in original sample (before split), need to extract corresponding chunk
                 if 'beta' in sample:
@@ -394,10 +394,12 @@ class Trainer():
             if self.conf.model.nbfield.enabled and self.conf.dataset.use_mono_normal:
                 sample['train_angle'] = torch.gather(self.train_angle[sample['idx'].cpu()], 1, sampling_idx.cpu()).cuda()
         if self.train_dataset.pts_path is not None:
-            rand_idx = torch.randint(self.train_dataset.pts.shape[0], (self.num_rays,), device=rays_o.device)
-            sample['pts'] = self.train_dataset.pts[rand_idx].to(rays_o.device)
-            sample['pts_normal'] = self.train_dataset.pts_normal[rand_idx].to(rays_o.device)
-            sample['pts_confidence'] = self.train_dataset.pts_confidence[rand_idx].to(rays_o.device)
+            # Get device from rays_o in sample dict (should always be present)
+            rays_o_device = sample['rays_o'].device
+            rand_idx = torch.randint(self.train_dataset.pts.shape[0], (self.num_rays,), device=rays_o_device)
+            sample['pts'] = self.train_dataset.pts[rand_idx].to(rays_o_device)
+            sample['pts_normal'] = self.train_dataset.pts_normal[rand_idx].to(rays_o_device)
+            sample['pts_confidence'] = self.train_dataset.pts_confidence[rand_idx].to(rays_o_device)
         return sample
 
     def update_train_angle(self, output, sample):
@@ -435,7 +437,8 @@ class Trainer():
         for epoch in range(self.last_epoch + 1, self.epoches + 1):
             # epoch_st = time.time()
             # last_t = time.time()
-            self.dataloader.sampler.set_epoch(epoch)
+            if self.train_sampler is not None:
+                self.dataloader.sampler.set_epoch(epoch)
             dataloader_wrapper = tqdm(enumerate(self.dataloader), total=len(self.dataloader), file=sys.stdout, desc=f"Epoch{epoch}")
             for i, sample in dataloader_wrapper:
                 progress = self.cur_step / self.max_step
