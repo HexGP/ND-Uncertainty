@@ -247,15 +247,15 @@ loss:
   # High σ → down-weight color errors (less penalty for uncertain regions)
   # Low σ → emphasize color errors (more penalty for certain regions)
   weight_unc: 1.0  # λ_color: Weight for heteroscedastic color loss (used in hybrid blend, not as replacement)
-  unc_lambda_reg: 0.2  # β: Weight for uncertainty regularizer (Run 7: increased from 0.18 to 0.2 to prevent high/uniform uncertainty causing lime green heatmaps)
+  unc_lambda_reg: 0.12  # β: Weight for uncertainty regularizer (Run 7: REDUCED from 0.2 to 0.12 to prevent uncertainty collapse - weaker regularization allows more variation)
   
   # Log-variance initialization: s_0 = log σ_0
-  init_log_sigma: -4.5  # s_0 = -4.5 → σ_0 ≈ 0.011 (Run 7: reduced from -4.0 to start lower, prevent high uncertainty inflation)
+  init_log_sigma: -3.5  # s_0 = -3.5 → σ_0 ≈ 0.03 (Run 7: INCREASED from -4.5 to -3.5 to start with more uncertainty, prevent early collapse)
   
   # Sigma clamping: σ ∈ [σ_min, σ_max]
   # CRITICAL: Keep sigma_min clamp for numerical stability (prevents division by zero in 1/σ²)
   # Remove sigma_max clamp (set very high) to allow natural uncertainty growth - regularizer will prevent unbounded growth
-  sigma_min: 0.01  # Minimum σ value (prevents numerical overflow when dividing by σ²)
+  sigma_min: 0.015  # Minimum σ value (Run 7: INCREASED from 0.01 to 0.015 to give more room before collapse, prevents hitting clamp too early)
   sigma_max: 1000.0  # Maximum σ value (effectively no clamp - regularizer R(σ) prevents unbounded growth)
   
   # Legacy SSIM parameters (not used in heteroscedastic mode, but kept for compatibility)

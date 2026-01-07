@@ -178,9 +178,9 @@ This document tracks the parameter values for different experimental runs testin
 |-----------|-------|-------|-------|-------|---------------|-------|-------|-----------------|
 | `hybrid_weight` | N/A | N/A | N/A | N/A | **0.3** | **0.4** | **0.25** | N/A |
 | `weight_unc` | 1.0 | 1.0 | **0.5** | **0.3** | 1.0 | 1.0 | 1.0 | 1.0 |
-| `unc_lambda_reg` | 0.05 | 0.1 | **0.15** | **0.2** | **0.15** | **0.18** | **0.2** | 0.5 |
-| `init_log_sigma` | -3.0 | -3.5 | **-4.0** | **-4.0** | **-4.0** | **-4.0** | **-4.5** | N/A |
-| `sigma_min` | 0.01 | 0.01 | 0.01 | 0.01 | 0.01 | 0.01 | 0.01 | 0.1 |
+| `unc_lambda_reg` | 0.05 | 0.1 | **0.15** | **0.2** | **0.15** | **0.18** | **0.12** | 0.5 |
+| `init_log_sigma` | -3.0 | -3.5 | **-4.0** | **-4.0** | **-4.0** | **-4.0** | **-3.5** | N/A |
+| `sigma_min` | 0.01 | 0.01 | 0.01 | 0.01 | 0.01 | 0.01 | **0.015** | 0.1 |
 | `sigma_max` | 0.5 | 1000.0 | 1000.0 | 1000.0 | 1000.0 | 1000.0 | 1000.0 | N/A |
 | `lambda_eik` | 0.05 | 0.05 | **0.08** | **0.1** | **0.08** | **0.09** | **0.08** | 0.05 |
 | `lambda_ab_normal` | 0.04 | 0.04 | **0.06** | **0.08** | **0.06** | **0.07** | **0.06** | 0.04 |
@@ -317,24 +317,25 @@ This document tracks the parameter values for different experimental runs testin
 
 ---
 
-## Run 7: Reduced Hybrid + Stronger Regularization (Target: Fix Lime Green + Improve F-score)
+## Run 7: Reduced Hybrid + Prevent Collapse (Target: Maintain Variation + Improve F-score)
 
-**Goal:** Address lime green heatmap (high/uniform uncertainty) and improve F-score by reducing hybrid_weight and strengthening regularization.
+**Goal:** Prevent uncertainty collapse (all values hitting sigma_min) while improving F-score by reducing hybrid_weight and weakening regularization.
 
 **Strategy:** 
 1. **Reduce hybrid_weight (0.4 → 0.25)** - Try less uncertainty (25% heteroscedastic, 75% RGB L1) since 0.4 performed worse than 0.3
-2. **Strengthen regularization (0.18 → 0.2)** - Pull uncertainty down from high values causing lime green heatmaps
-3. **Lower initial uncertainty (-4.0 → -4.5)** - Start even lower to prevent early inflation
-4. **Revert geometry constraints (0.09→0.08, 0.07→0.06)** - Back to Run 5 values since Run 6's increases didn't help
+2. **Weaken regularization (0.2 → 0.12)** - Prevent uncertainty collapse by allowing more variation (weaker regularization)
+3. **Increase initial uncertainty (-4.5 → -3.5)** - Start with more uncertainty to prevent early collapse
+4. **Increase sigma_min (0.01 → 0.015)** - Give more room before hitting clamp boundary
+5. **Revert geometry constraints (0.09→0.08, 0.07→0.06)** - Back to Run 5 values since Run 6's increases didn't help
 
 ### Uncertainty Parameters
 - `use_uncertainty: true`
 - `use_ssim_uncertainty: false` (heteroscedastic mode)
 - `hybrid_weight: 0.25` (**REDUCED from 0.4** - 25% heteroscedastic, 75% standard RGB L1, try less uncertainty)
 - `weight_unc: 1.0` (λ_color: weight for heteroscedastic component in blend)
-- `unc_lambda_reg: 0.2` (**INCREASED from 0.18** - stronger regularization to prevent high/uniform uncertainty)
-- `init_log_sigma: -4.5` (**REDUCED from -4.0** - σ₀ ≈ 0.011, start lower to prevent inflation)
-- `sigma_min: 0.01` (minimum σ clamp for numerical stability)
+- `unc_lambda_reg: 0.12` (**REDUCED from 0.2 to 0.12** - weaker regularization to prevent collapse, allow more variation)
+- `init_log_sigma: -3.5` (**INCREASED from -4.5 to -3.5** - σ₀ ≈ 0.03, start with more uncertainty to prevent early collapse)
+- `sigma_min: 0.015` (**INCREASED from 0.01 to 0.015** - give more room before hitting clamp, prevent early collapse)
 - `sigma_max: 1000.0` (effectively no max clamp, regularizer prevents unbounded growth)
 - `uncertainty_warmup_steps: 5000`
 - `uncertainty_lr_scale: 0.1`
@@ -348,22 +349,29 @@ This document tracks the parameter values for different experimental runs testin
 1. **Reduced hybrid_weight (0.25)** - Since 0.4 performed worse than 0.3, try even less uncertainty (25% vs 30%)
    - More RGB L1 (75%) should help color learning and F-score
    - Less uncertainty interference should improve overall performance
-2. **Stronger regularization (0.2)** - Address lime green heatmap by penalizing high uncertainty more aggressively
-   - Should pull uncertainty values down from high/uniform state
-   - Prevent saturation that causes uniform visualization
-3. **Lower initial uncertainty (-4.5)** - Start even lower to prevent early inflation that leads to high values
-4. **Reverted geometry constraints** - Run 6's increases didn't help, back to Run 5's proven values
+2. **Weaker regularization (0.12)** - Prevent uncertainty collapse by allowing more variation
+   - Previous runs showed collapse to sigma_min (0.01) at epoch 2400
+   - Weaker regularization (0.12 vs 0.2) will allow uncertainty to maintain spatial variation
+   - Still strong enough to prevent unbounded inflation (sigma_max: 1000.0)
+3. **Higher initial uncertainty (-3.5)** - Start with more uncertainty to prevent early collapse
+   - Previous runs started at -4.0 to -4.5 and collapsed quickly
+   - Starting at -3.5 (σ₀ ≈ 0.03) gives more headroom before hitting sigma_min
+4. **Higher sigma_min (0.015)** - Give more room before hitting clamp boundary
+   - Previous runs collapsed to 0.01 (sigma_min), showing uniform values
+   - Increasing to 0.015 provides more room for variation
+5. **Reverted geometry constraints** - Run 6's increases didn't help, back to Run 5's proven values
 
 ### Expected Results
 - **Target Normal C.:** > 88.75 (match or exceed Run 5)
 - **Target Chamfer:** < 3.71 (match or exceed Run 5)
 - **Target F-score:** > 78.87 (match or exceed Run 5, primary focus)
-- **Target Visualization:** More variation in uncertainty heatmaps (not uniform lime green)
+- **Target Visualization:** Maintain variation in uncertainty heatmaps at epoch 2400 (not uniform lime green/collapsed)
 
 ### Key Hypothesis
 - **Less uncertainty (25% vs 30-40%)** will improve F-score by reducing interference with color learning
-- **Stronger regularization (0.2)** will fix lime green heatmap by pulling uncertainty down
-- **Lower initial uncertainty (-4.5)** will prevent early inflation
+- **Weaker regularization (0.12)** will prevent collapse and maintain spatial variation in uncertainty
+- **Higher initial uncertainty (-3.5)** will prevent early collapse
+- **Higher sigma_min (0.015)** will give more room before hitting clamp
 - **Reverted geometry** will maintain Run 5's proven balance
 
 ---
