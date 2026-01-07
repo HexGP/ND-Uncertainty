@@ -12,7 +12,8 @@ This document tracks the parameter values for different experimental runs testin
 | Run 3 | 86.17 | 5.88 | 64.63 | Good - significant improvement |
 | Run 4 | 86.82 | 6.01 | 66.63 | Marginal improvement - diminishing returns |
 | Run 5: Hybrid | 88.75 | 3.71 | 78.87 | Excellent - hybrid approach breakthrough |
-| Run 6: Tuned Hybrid | TBD | TBD | TBD | In progress - increased hybrid_weight to 0.4 |
+| Run 6: Tuned Hybrid | 88.95 | 3.88 | 76.71 | Regression - 0.4 hybrid_weight performed worse than Run 5 |
+| Run 7: Reduced Hybrid | TBD | TBD | TBD | In progress - reduced hybrid_weight to 0.25, stronger regularization |
 
 ---
 
@@ -173,17 +174,17 @@ This document tracks the parameter values for different experimental runs testin
 
 ## Parameter Comparison Table
 
-| Parameter | Run 1 | Run 2 | Run 3 | Run 4 | Run 5: Hybrid | Baseline (SSIM) |
-|-----------|-------|-------|-------|-------|---------------|-----------------|
-| `hybrid_weight` | N/A | N/A | N/A | N/A | **0.3** | N/A |
-| `weight_unc` | 1.0 | 1.0 | **0.5** | **0.3** | 1.0 | 1.0 |
-| `unc_lambda_reg` | 0.05 | 0.1 | **0.15** | **0.2** | **0.15** | 0.5 |
-| `init_log_sigma` | -3.0 | -3.5 | **-4.0** | **-4.0** | **-4.0** | N/A |
-| `sigma_min` | 0.01 | 0.01 | 0.01 | 0.01 | 0.01 | 0.1 |
-| `sigma_max` | 0.5 | 1000.0 | 1000.0 | 1000.0 | 1000.0 | N/A |
-| `lambda_eik` | 0.05 | 0.05 | **0.08** | **0.1** | **0.08** | 0.05 |
-| `lambda_ab_normal` | 0.04 | 0.04 | **0.06** | **0.08** | **0.06** | 0.04 |
-| `use_ssim_uncertainty` | false | false | false | false | false | true |
+| Parameter | Run 1 | Run 2 | Run 3 | Run 4 | Run 5: Hybrid | Run 6 | Run 7 | Baseline (SSIM) |
+|-----------|-------|-------|-------|-------|---------------|-------|-------|-----------------|
+| `hybrid_weight` | N/A | N/A | N/A | N/A | **0.3** | **0.4** | **0.25** | N/A |
+| `weight_unc` | 1.0 | 1.0 | **0.5** | **0.3** | 1.0 | 1.0 | 1.0 | 1.0 |
+| `unc_lambda_reg` | 0.05 | 0.1 | **0.15** | **0.2** | **0.15** | **0.18** | **0.2** | 0.5 |
+| `init_log_sigma` | -3.0 | -3.5 | **-4.0** | **-4.0** | **-4.0** | **-4.0** | **-4.5** | N/A |
+| `sigma_min` | 0.01 | 0.01 | 0.01 | 0.01 | 0.01 | 0.01 | 0.01 | 0.1 |
+| `sigma_max` | 0.5 | 1000.0 | 1000.0 | 1000.0 | 1000.0 | 1000.0 | 1000.0 | N/A |
+| `lambda_eik` | 0.05 | 0.05 | **0.08** | **0.1** | **0.08** | **0.09** | **0.08** | 0.05 |
+| `lambda_ab_normal` | 0.04 | 0.04 | **0.06** | **0.08** | **0.06** | **0.07** | **0.06** | 0.04 |
+| `use_ssim_uncertainty` | false | false | false | false | false | false | false | true |
 
 ---
 
@@ -298,5 +299,71 @@ This document tracks the parameter values for different experimental runs testin
 - **Maintained RGB L1 strength (60%)** will prevent color degradation
 - **Slightly stronger geometry** will close Normal C. gap
 - **Stronger regularization** will maintain stability
+
+### Actual Results
+- **Normal C.: 88.95** (+0.20 from Run 5, -2.58 from baseline) - **Slight improvement** but still below baseline
+- **Chamfer: 3.88** (+0.17 from Run 5, +1.07 from baseline) - **Worse than Run 5**, moved away from baseline
+- **F-score: 76.71** (-2.16 from Run 5, -13.38 from baseline) - **Regression**, primary target failed
+
+### Analysis
+- **Run 6 performed worse than Run 5** - Increasing `hybrid_weight` from 0.3 to 0.4 hurt performance
+- **F-score decreased** - More uncertainty (40%) interfered with color learning instead of helping
+- **Chamfer increased** - Geometry quality degraded slightly
+- **Key Insight**: 30% heteroscedastic (Run 5) appears to be the optimal hybrid weight. More uncertainty doesn't help.
+
+### Visualization Issue
+- **Uncertainty heatmaps appear lime green (uniform)** - Uncertainty values are high and uniform, suggesting saturation or convergence to high values
+- **Regularization may need to be stronger** to pull uncertainty down from high values
+
+---
+
+## Run 7: Reduced Hybrid + Stronger Regularization (Target: Fix Lime Green + Improve F-score)
+
+**Goal:** Address lime green heatmap (high/uniform uncertainty) and improve F-score by reducing hybrid_weight and strengthening regularization.
+
+**Strategy:** 
+1. **Reduce hybrid_weight (0.4 → 0.25)** - Try less uncertainty (25% heteroscedastic, 75% RGB L1) since 0.4 performed worse than 0.3
+2. **Strengthen regularization (0.18 → 0.2)** - Pull uncertainty down from high values causing lime green heatmaps
+3. **Lower initial uncertainty (-4.0 → -4.5)** - Start even lower to prevent early inflation
+4. **Revert geometry constraints (0.09→0.08, 0.07→0.06)** - Back to Run 5 values since Run 6's increases didn't help
+
+### Uncertainty Parameters
+- `use_uncertainty: true`
+- `use_ssim_uncertainty: false` (heteroscedastic mode)
+- `hybrid_weight: 0.25` (**REDUCED from 0.4** - 25% heteroscedastic, 75% standard RGB L1, try less uncertainty)
+- `weight_unc: 1.0` (λ_color: weight for heteroscedastic component in blend)
+- `unc_lambda_reg: 0.2` (**INCREASED from 0.18** - stronger regularization to prevent high/uniform uncertainty)
+- `init_log_sigma: -4.5` (**REDUCED from -4.0** - σ₀ ≈ 0.011, start lower to prevent inflation)
+- `sigma_min: 0.01` (minimum σ clamp for numerical stability)
+- `sigma_max: 1000.0` (effectively no max clamp, regularizer prevents unbounded growth)
+- `uncertainty_warmup_steps: 5000`
+- `uncertainty_lr_scale: 0.1`
+
+### Geometry Parameters
+- `lambda_eik: 0.08` (**REVERTED from 0.09** - back to Run 5 value, Run 6's increase didn't help)
+- `lambda_ab_normal: 0.06` (**REVERTED from 0.07** - back to Run 5 value, Run 6's increase didn't help)
+- `lambda_rgb_l1: 1.0` (used in hybrid blend, not replaced)
+
+### Rationale
+1. **Reduced hybrid_weight (0.25)** - Since 0.4 performed worse than 0.3, try even less uncertainty (25% vs 30%)
+   - More RGB L1 (75%) should help color learning and F-score
+   - Less uncertainty interference should improve overall performance
+2. **Stronger regularization (0.2)** - Address lime green heatmap by penalizing high uncertainty more aggressively
+   - Should pull uncertainty values down from high/uniform state
+   - Prevent saturation that causes uniform visualization
+3. **Lower initial uncertainty (-4.5)** - Start even lower to prevent early inflation that leads to high values
+4. **Reverted geometry constraints** - Run 6's increases didn't help, back to Run 5's proven values
+
+### Expected Results
+- **Target Normal C.:** > 88.75 (match or exceed Run 5)
+- **Target Chamfer:** < 3.71 (match or exceed Run 5)
+- **Target F-score:** > 78.87 (match or exceed Run 5, primary focus)
+- **Target Visualization:** More variation in uncertainty heatmaps (not uniform lime green)
+
+### Key Hypothesis
+- **Less uncertainty (25% vs 30-40%)** will improve F-score by reducing interference with color learning
+- **Stronger regularization (0.2)** will fix lime green heatmap by pulling uncertainty down
+- **Lower initial uncertainty (-4.5)** will prevent early inflation
+- **Reverted geometry** will maintain Run 5's proven balance
 
 ---
