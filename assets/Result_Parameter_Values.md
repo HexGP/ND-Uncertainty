@@ -13,7 +13,8 @@ This document tracks the parameter values for different experimental runs testin
 | Run 4 | 86.82 | 6.01 | 66.63 | Marginal improvement - diminishing returns |
 | Run 5: Hybrid | 88.75 | 3.71 | 78.87 | Excellent - hybrid approach breakthrough |
 | Run 6: Tuned Hybrid | 88.95 | 3.88 | 76.71 | Regression - 0.4 hybrid_weight performed worse than Run 5 |
-| Run 7: Reduced Hybrid | TBD | TBD | TBD | In progress - reduced hybrid_weight to 0.25, stronger regularization |
+| Run 7: Reduced Hybrid | 88.00 | 4.38 | 71.59 | Significant regression - all changes made performance worse |
+| Run 8: Restored Run 5 | TBD | TBD | TBD | In progress - restored Run 5's proven parameters |
 
 ---
 
@@ -176,15 +177,15 @@ This document tracks the parameter values for different experimental runs testin
 
 | Parameter | Run 1 | Run 2 | Run 3 | Run 4 | Run 5: Hybrid | Run 6 | Run 7 | Baseline (SSIM) |
 |-----------|-------|-------|-------|-------|---------------|-------|-------|-----------------|
-| `hybrid_weight` | N/A | N/A | N/A | N/A | **0.3** | **0.4** | **0.25** | N/A |
-| `weight_unc` | 1.0 | 1.0 | **0.5** | **0.3** | 1.0 | 1.0 | 1.0 | 1.0 |
-| `unc_lambda_reg` | 0.05 | 0.1 | **0.15** | **0.2** | **0.15** | **0.18** | **0.12** | 0.5 |
-| `init_log_sigma` | -3.0 | -3.5 | **-4.0** | **-4.0** | **-4.0** | **-4.0** | **-3.5** | N/A |
-| `sigma_min` | 0.01 | 0.01 | 0.01 | 0.01 | 0.01 | 0.01 | **0.015** | 0.1 |
-| `sigma_max` | 0.5 | 1000.0 | 1000.0 | 1000.0 | 1000.0 | 1000.0 | 1000.0 | N/A |
-| `lambda_eik` | 0.05 | 0.05 | **0.08** | **0.1** | **0.08** | **0.09** | **0.08** | 0.05 |
-| `lambda_ab_normal` | 0.04 | 0.04 | **0.06** | **0.08** | **0.06** | **0.07** | **0.06** | 0.04 |
-| `use_ssim_uncertainty` | false | false | false | false | false | false | false | true |
+| `hybrid_weight` | N/A | N/A | N/A | N/A | **0.3** | **0.4** | **0.25** | **0.3** | N/A |
+| `weight_unc` | 1.0 | 1.0 | **0.5** | **0.3** | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
+| `unc_lambda_reg` | 0.05 | 0.1 | **0.15** | **0.2** | **0.15** | **0.18** | **0.12** | **0.15** | 0.5 |
+| `init_log_sigma` | -3.0 | -3.5 | **-4.0** | **-4.0** | **-4.0** | **-4.0** | **-3.5** | **-4.0** | N/A |
+| `sigma_min` | 0.01 | 0.01 | 0.01 | 0.01 | 0.01 | 0.01 | **0.015** | **0.01** | 0.1 |
+| `sigma_max` | 0.5 | 1000.0 | 1000.0 | 1000.0 | 1000.0 | 1000.0 | 1000.0 | 1000.0 | N/A |
+| `lambda_eik` | 0.05 | 0.05 | **0.08** | **0.1** | **0.08** | **0.09** | **0.08** | **0.08** | 0.05 |
+| `lambda_ab_normal` | 0.04 | 0.04 | **0.06** | **0.08** | **0.06** | **0.07** | **0.06** | **0.06** | 0.04 |
+| `use_ssim_uncertainty` | false | false | false | false | false | false | false | false | true |
 
 ---
 
@@ -373,5 +374,65 @@ This document tracks the parameter values for different experimental runs testin
 - **Higher initial uncertainty (-3.5)** will prevent early collapse
 - **Higher sigma_min (0.015)** will give more room before hitting clamp
 - **Reverted geometry** will maintain Run 5's proven balance
+
+### Actual Results
+- **Normal C.: 88.00** (-0.75 from Run 5, -0.95 from Run 6, -3.53 from baseline) - **Regression**, worse than both Run 5 and Run 6
+- **Chamfer: 4.38** (+0.67 from Run 5, +0.50 from Run 6, +1.57 from baseline) - **Worse**, geometry degraded
+- **F-score: 71.59** (-7.28 from Run 5, -5.12 from Run 6, -18.50 from baseline) - **Significant regression**, biggest drop
+
+### Analysis
+- **Run 7 performed worse than both Run 5 and Run 6** - All parameter changes made performance worse
+- **F-score dropped significantly** (-7.28 from Run 5) - Primary failure, too little uncertainty benefit
+- **Chamfer increased** (+0.67 from Run 5) - Geometry quality degraded
+- **Variation window shifted earlier** (240→480 vs 240→720) - Uncertainty collapsed sooner despite trying to prevent it
+- **Key Insight**: All anti-collapse changes backfired - reducing hybrid_weight and weakening regularization too much hurt performance
+
+### Visualization Issue
+- **Variation window shifted earlier** (240→480 instead of 240→720) - Uncertainty collapsed earlier despite changes intended to prevent it
+- **Faster collapse** confirms that Run 7's parameters were too aggressive
+
+---
+
+## Run 8: Restored Run 5 Parameters (Back to Best Configuration)
+
+**Goal:** Restore Run 5's proven parameters after Run 7's regression. Use Run 5 as baseline for future fine-tuning.
+
+**Strategy:** 
+1. **Restore all Run 5 parameters** - Return to proven configuration that achieved best results
+2. **Use as stable baseline** - Establish Run 5 as reference point for future experiments
+
+### Uncertainty Parameters
+- `use_uncertainty: true`
+- `use_ssim_uncertainty: false` (heteroscedastic mode)
+- `hybrid_weight: 0.3` (**RESTORED from Run 5** - 30% heteroscedastic, 70% standard RGB L1)
+- `weight_unc: 1.0` (λ_color: weight for heteroscedastic component in blend)
+- `unc_lambda_reg: 0.15` (**RESTORED from Run 5** - moderate regularization)
+- `init_log_sigma: -4.0` (**RESTORED from Run 5** - σ₀ ≈ 0.018, proven to work well)
+- `sigma_min: 0.01` (**RESTORED from Run 5** - lower clamp gives more room)
+- `sigma_max: 1000.0` (effectively no max clamp, regularizer prevents unbounded growth)
+- `uncertainty_warmup_steps: 5000`
+- `uncertainty_lr_scale: 0.1`
+
+### Geometry Parameters
+- `lambda_eik: 0.08` (**RESTORED from Run 5** - proven geometry constraint)
+- `lambda_ab_normal: 0.06` (**RESTORED from Run 5** - proven normal constraint)
+- `lambda_rgb_l1: 1.0` (used in hybrid blend, not replaced)
+
+### Rationale
+1. **Restored Run 5 parameters** - Return to proven configuration that achieved best results so far
+2. **Run 7 confirmed Run 5 is better** - All changes in Run 7 made performance worse
+3. **Establish stable baseline** - Use Run 5 as reference point for future fine-tuning
+4. **Proven balance** - Run 5 achieved best hybrid approach results (88.75, 3.71, 78.87)
+
+### Expected Results
+- **Target Normal C.:** ≈ 88.75 (match Run 5)
+- **Target Chamfer:** ≈ 3.71 (match Run 5)
+- **Target F-score:** ≈ 78.87 (match Run 5)
+- **Target Visualization:** Variation window around 240→720 (similar to Run 5)
+
+### Key Hypothesis
+- **Restored parameters will match Run 5** - Same configuration should produce similar results
+- **Run 5 is optimal hybrid configuration** - 30% heteroscedastic, 70% RGB L1 with moderate regularization
+- **This establishes stable baseline** - Future experiments can tune from this proven point
 
 ---

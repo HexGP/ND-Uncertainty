@@ -237,25 +237,25 @@ loss:
   # where α = hybrid_weight
   # hybrid_weight = 1.0 → pure heteroscedastic (replaces RGB L1, Run 1-4 approach)
   # hybrid_weight = 0.4 → 40% heteroscedastic, 60% standard RGB L1 (Run 6: performed worse than Run 5)
-  # hybrid_weight = 0.3 → 30% heteroscedastic, 70% standard RGB L1 (Run 5: best hybrid result so far)
-  # hybrid_weight = 0.25 → 25% heteroscedastic, 75% standard RGB L1 (Run 7: try less uncertainty, more RGB L1)
+  # hybrid_weight = 0.3 → 30% heteroscedastic, 70% standard RGB L1 (Run 5: best hybrid result, Run 8: restored)
+  # hybrid_weight = 0.25 → 25% heteroscedastic, 75% standard RGB L1 (Run 7: performed worse than Run 5)
   # hybrid_weight = 0.0 → pure standard RGB L1 (no uncertainty)
-  hybrid_weight: 0.25  # α: Blend weight for hybrid approach (Run 7: 25% heteroscedastic, 75% standard RGB L1 - reduced from 0.4 since Run 6 performed worse)
+  hybrid_weight: 0.3  # α: Blend weight for hybrid approach (Run 8: RESTORED to Run 5 value 0.3 - 30% heteroscedastic, 70% standard RGB L1)
   
   # Heteroscedastic color loss: L_color(r) = (1/(2σ²)) * ||C - Ĉ||² + (1/2) * log(σ²)
   # Used in hybrid blend with standard RGB L1
   # High σ → down-weight color errors (less penalty for uncertain regions)
   # Low σ → emphasize color errors (more penalty for certain regions)
   weight_unc: 1.0  # λ_color: Weight for heteroscedastic color loss (used in hybrid blend, not as replacement)
-  unc_lambda_reg: 0.12  # β: Weight for uncertainty regularizer (Run 7: REDUCED from 0.2 to 0.12 to prevent uncertainty collapse - weaker regularization allows more variation)
+  unc_lambda_reg: 0.15  # β: Weight for uncertainty regularizer (Run 8: RESTORED to Run 5 value 0.15 - moderate regularization)
   
   # Log-variance initialization: s_0 = log σ_0
-  init_log_sigma: -3.5  # s_0 = -3.5 → σ_0 ≈ 0.03 (Run 7: INCREASED from -4.5 to -3.5 to start with more uncertainty, prevent early collapse)
+  init_log_sigma: -4.0  # s_0 = -4.0 → σ_0 ≈ 0.018 (Run 8: RESTORED to Run 5 value -4.0 - proven to work well)
   
   # Sigma clamping: σ ∈ [σ_min, σ_max]
   # CRITICAL: Keep sigma_min clamp for numerical stability (prevents division by zero in 1/σ²)
   # Remove sigma_max clamp (set very high) to allow natural uncertainty growth - regularizer will prevent unbounded growth
-  sigma_min: 0.015  # Minimum σ value (Run 7: INCREASED from 0.01 to 0.015 to give more room before collapse, prevents hitting clamp too early)
+  sigma_min: 0.01  # Minimum σ value (Run 8: RESTORED to Run 5 value 0.01 - lower clamp gives more room before collapse)
   sigma_max: 1000.0  # Maximum σ value (effectively no clamp - regularizer R(σ) prevents unbounded growth)
   
   # Legacy SSIM parameters (not used in heteroscedastic mode, but kept for compatibility)
