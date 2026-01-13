@@ -257,7 +257,7 @@ loss:
   # CRITICAL: Keep sigma_min clamp for numerical stability (prevents division by zero in 1/σ²)
   # Remove sigma_max clamp (set very high) to allow natural uncertainty growth - regularizer will prevent unbounded growth
   sigma_min: 0.01  # Minimum σ value (Run 8: RESTORED to Run 5 value 0.01 - lower clamp gives more room before collapse)
-  sigma_max: 1000.0  # Maximum σ value (effectively no clamp - regularizer R(σ) prevents unbounded growth)
+  sigma_max: 100000.0  # Maximum σ value (Run 10: INCREASED from 1000.0 to 100000.0 - much higher clamp to match baseline approach, regularizer R(σ) prevents unbounded growth)
   
   # Legacy SSIM parameters (not used in heteroscedastic mode, but kept for compatibility)
   unc_clip_min: 0.1  # Legacy: minimum uncertainty value (not used in heteroscedastic mode, replaced by sigma_min)

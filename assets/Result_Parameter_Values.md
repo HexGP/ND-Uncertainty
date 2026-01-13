@@ -4,18 +4,19 @@ This document tracks the parameter values for different experimental runs testin
 
 ## Results Summary
 
-| Run | Normal C. ↑ | Chamfer ↓ | F-score ↑ | Status |
-|-----|-------------|-----------|-----------|--------|
-| Baseline (SSIM) | 91.53 | 2.81 | 90.09 | Reference |
-| Run 1 | 80.04 | 14.85 | 25.28 | Poor - uncertainty collapsed |
-| Run 2 | 83.23 | 8.99 | 45.59 | Improved - fixes applied |
-| Run 3 | 86.17 | 5.88 | 64.63 | Good - significant improvement |
-| Run 4 | 86.82 | 6.01 | 66.63 | Marginal improvement - diminishing returns |
-| Run 5: Hybrid | 88.75 | 3.71 | 78.87 | Excellent - hybrid approach breakthrough |
-| Run 6: Tuned Hybrid | 88.95 | 3.88 | 76.71 | Regression - 0.4 hybrid_weight performed worse than Run 5 |
-| Run 7: Reduced Hybrid | 88.00 | 4.38 | 71.59 | Significant regression - all changes made performance worse |
-| Run 8: Restored Run 5 | 87.70 | 3.89 | 78.29 | Slightly below Run 5 - within variance, confirms approach |
-| Run 9: Fine-tuned Hybrid | TBD | TBD | TBD | In progress - conservative increase in uncertainty (0.32) |
+| Run | Normal C. ↑ | Chamfer ↓ | F-score ↑ | Clamp | Status |
+|-----|-------------|-----------|-----------|-------|--------|
+| Baseline (SSIM) | 91.53 | 2.81 | 90.09 | None | Reference |
+| Run 1 | 80.04 | 14.85 | 25.28 | 0.5 | Poor - uncertainty collapsed |
+| Run 2 | 83.23 | 8.99 | 45.59 | 1000.0 | Improved - fixes applied |
+| Run 3 | 86.17 | 5.88 | 64.63 | 1000.0 | Good - significant improvement |
+| Run 4 | 86.82 | 6.01 | 66.63 | 1000.0 | Marginal improvement - diminishing returns |
+| Run 5: Hybrid | 88.75 | 3.71 | 78.87 | 1000.0 | Excellent - hybrid approach breakthrough |
+| Run 6: Tuned Hybrid | 88.95 | 3.88 | 76.71 | 1000.0 | Regression - 0.4 hybrid_weight performed worse than Run 5 |
+| Run 7: Reduced Hybrid | 88.00 | 4.38 | 71.59 | 1000.0 | Significant regression - all changes made performance worse |
+| Run 8: Restored Run 5 | 87.70 | 3.89 | 78.29 | 1000.0 | Slightly below Run 5 - within variance, confirms approach |
+| Run 9: Fine-tuned Hybrid | TBD | TBD | TBD | 1000.0 | In progress - conservative increase in uncertainty (0.32) |
+| Run 10: Higher Max Clamp | TBD | TBD | TBD | 100000.0 | In progress - increased sigma_max to 100000.0 to match baseline approach |
 
 ---
 
@@ -178,12 +179,12 @@ This document tracks the parameter values for different experimental runs testin
 
 | Parameter | Run 1 | Run 2 | Run 3 | Run 4 | Run 5: Hybrid | Run 6 | Run 7 | Baseline (SSIM) |
 |-----------|-------|-------|-------|-------|---------------|-------|-------|-----------------|
-| `hybrid_weight` | N/A | N/A | N/A | N/A | **0.3** | **0.4** | **0.25** | **0.3** | **0.32** | N/A |
-| `weight_unc` | 1.0 | 1.0 | **0.5** | **0.3** | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
-| `unc_lambda_reg` | 0.05 | 0.1 | **0.15** | **0.2** | **0.15** | **0.18** | **0.12** | **0.15** | **0.16** | 0.5 |
-| `init_log_sigma` | -3.0 | -3.5 | **-4.0** | **-4.0** | **-4.0** | **-4.0** | **-3.5** | **-4.0** | **-4.0** | N/A |
-| `sigma_min` | 0.01 | 0.01 | 0.01 | 0.01 | 0.01 | 0.01 | **0.015** | **0.01** | **0.01** | 0.1 |
-| `sigma_max` | 0.5 | 1000.0 | 1000.0 | 1000.0 | 1000.0 | 1000.0 | 1000.0 | 1000.0 | 1000.0 | N/A |
+| `hybrid_weight` | N/A | N/A | N/A | N/A | **0.3** | **0.4** | **0.25** | **0.3** | **0.32** | **0.32** | N/A |
+| `weight_unc` | 1.0 | 1.0 | **0.5** | **0.3** | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
+| `unc_lambda_reg` | 0.05 | 0.1 | **0.15** | **0.2** | **0.15** | **0.18** | **0.12** | **0.15** | **0.16** | **0.16** | 0.5 |
+| `init_log_sigma` | -3.0 | -3.5 | **-4.0** | **-4.0** | **-4.0** | **-4.0** | **-3.5** | **-4.0** | **-4.0** | **-4.0** | N/A |
+| `sigma_min` | 0.01 | 0.01 | 0.01 | 0.01 | 0.01 | 0.01 | **0.015** | **0.01** | **0.01** | **0.01** | 0.1 |
+| `sigma_max` | 0.5 | 1000.0 | 1000.0 | 1000.0 | 1000.0 | 1000.0 | 1000.0 | 1000.0 | 1000.0 | **100000.0** | N/A |
 | `lambda_eik` | 0.05 | 0.05 | **0.08** | **0.1** | **0.08** | **0.09** | **0.08** | **0.08** | **0.08** | 0.05 |
 | `lambda_ab_normal` | 0.04 | 0.04 | **0.06** | **0.08** | **0.06** | **0.07** | **0.06** | **0.06** | **0.06** | 0.04 |
 | `use_ssim_uncertainty` | false | false | false | false | false | false | false | false | false | true |
@@ -496,5 +497,53 @@ This document tracks the parameter values for different experimental runs testin
 - **Slightly stronger regularization (0.16)** will maintain stability
 - **Proven geometry constraints** will maintain Normal C. and Chamfer quality
 - **This should be the sweet spot** between Run 5 (0.3) and Run 6 (0.4)
+
+---
+
+## Run 10: Higher Max Clamp (Match Baseline Approach)
+
+**Goal:** Increase `sigma_max` to 100,000 to match baseline approach (effectively no max clamp) while keeping `sigma_min` for numerical stability.
+
+**Strategy:** 
+1. **Increase sigma_max (1000.0 → 100000.0)** - Much higher clamp to effectively match baseline (no max clamp)
+2. **Keep all Run 9 parameters** - Maintain proven hybrid approach configuration
+
+### Uncertainty Parameters
+- `use_uncertainty: true`
+- `use_ssim_uncertainty: false` (heteroscedastic mode)
+- `hybrid_weight: 0.32` (**KEPT from Run 9** - 32% heteroscedastic, 68% standard RGB L1)
+- `weight_unc: 1.0` (λ_color: weight for heteroscedastic component in blend)
+- `unc_lambda_reg: 0.16` (**KEPT from Run 9** - slightly stronger regularization)
+- `init_log_sigma: -4.0` (**KEPT from Run 9** - σ₀ ≈ 0.018, proven to work well)
+- `sigma_min: 0.01` (**KEPT from Run 9** - needed for numerical stability)
+- `sigma_max: 100000.0` (**INCREASED from 1000.0 to 100000.0** - much higher clamp, effectively no constraint like baseline)
+- `uncertainty_warmup_steps: 5000`
+- `uncertainty_lr_scale: 0.1`
+
+### Geometry Parameters
+- `lambda_eik: 0.08` (**KEPT from Run 9** - proven geometry constraint)
+- `lambda_ab_normal: 0.06` (**KEPT from Run 9** - proven normal constraint)
+- `lambda_rgb_l1: 1.0` (used in hybrid blend, not replaced)
+
+### Rationale
+1. **Much higher sigma_max (100000.0)** - Effectively no max clamp, matching baseline approach
+   - Baseline doesn't use `sigma_max` for SSIM-based uncertainty
+   - Regularizer should prevent unbounded growth (same as with 1000.0)
+   - Provides safety net (unlike removing clamp entirely) but unlikely to be hit
+   - Easier to debug (can see if values approach this bound)
+2. **Keep all other Run 9 parameters** - Maintain proven hybrid configuration
+   - Run 9's conservative tweaks (0.32 hybrid_weight, 0.16 regularization) are good
+   - Only testing if higher max clamp affects uncertainty behavior
+
+### Expected Results
+- **Target Normal C.:** ≥ 87.70 (maintain or improve from Run 8/9)
+- **Target Chamfer:** ≤ 3.89 (maintain or improve from Run 8/9)
+- **Target F-score:** > 78.29 (improve from Run 8, ideally > 78.87 to match/exceed Run 5)
+
+### Key Hypothesis
+- **Higher sigma_max (100000.0 vs 1000.0)** should match baseline approach more closely
+- **No practical difference** - Both are so high they're effectively no constraint
+- **Regularizer still prevents unbounded growth** - Same protection as before
+- **If Run 9 performs well, Run 10 should match** - Only change is max clamp value
 
 ---
